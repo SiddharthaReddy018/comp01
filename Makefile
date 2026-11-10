@@ -158,7 +158,7 @@ accept-m3: test-m3
 .PHONY: test-m4 accept-m4 test-m5 accept-m5
 test-m4: | $(ARTIFACTS)
 	@echo "=== M4: Tier 2 compiler, reference suite ==="
-	@test -x tools/vm || gcc -O2 -o tools/vm tools/vm.c
+	@gcc -O2 -o tools/vm tools/vm.c
 	@fail=0; for f in tests/reference/*.v1; do \
 		name=$$(basename $$f .v1); exp="tests/reference/$$name.expected"; \
 		got=$$(python3 tier2/compile.py < "$$f" | tools/vm /dev/stdin 2>&1); want=$$(cat "$$exp"); \

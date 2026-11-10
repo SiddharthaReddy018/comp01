@@ -7,3 +7,4 @@ artifacts/benchmarks/*
 !artifacts/benchmarks/.gitkeep
 *.log
 .DS_Store
+tools/vm

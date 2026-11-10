@@ -1,0 +1,18 @@
+// tests/reference/wraparound.v1
+// 32-bit signed wraparound arithmetic (from spec: "32-bit signed wraparound")
+// MAX_INT = 2147483647; MIN_INT = -2147483648 = -2147483647 - 1
+// MAX_INT + 1 = MIN_INT (wraps)
+// MIN_INT - 1 = MAX_INT (wraps)
+// Expected output: "1\n1\n"
+func main() {
+    var mx;
+    var mn;
+    mx = 2147483647;
+    mn = -2147483647 - 1;   // -2147483648
+    // mx + 1 == mn (wrap)
+    if (mx + 1 == mn) { putc(49); } // '1'
+    putc(10);
+    // mn - 1 == mx (wrap)
+    if (mn - 1 == mx) { putc(49); }
+    putc(10);
+}

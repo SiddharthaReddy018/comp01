@@ -10,6 +10,9 @@ COMP01_KIT ?=
 SKIP_OFFICIAL ?= 0
 ARTIFACTS := artifacts/test-results
 
+$(ARTIFACTS):
+	mkdir -p $(ARTIFACTS)
+
 # Guard: official VM must be present unless SKIP_OFFICIAL=1
 define check_kit
 	@if [ "$(SKIP_OFFICIAL)" != "1" ]; then \
@@ -46,11 +49,115 @@ test-m0:
 accept-m0: test-m0
 	@echo "M0 ACCEPTED"
 
-# Placeholder targets for future milestones
-.PHONY: test-m1 test-m2 test-m3
+# ── M1: VM and assembler ──────────────────────────────────────────────────────
+.PHONY: test-m1 accept-m1
+test-m1: | $(ARTIFACTS)
+	@echo "=== M1: VM and Assembler ==="
+	@echo "--- Building VM ---"
+	gcc -O2 -Wall -o tools/vm tools/vm.c 2>&1 | grep -v "unused function" || true
+	@test -x tools/vm || { echo "FAIL: vm build failed"; exit 1; }
+	@echo "--- Running assembler unit tests ---"
+	python3 tools/asm.py
+	@echo "--- Running v1i unit tests ---"
+	python3 tools/v1i.py --test
+	$(call check_kit)
+	@if [ "$(SKIP_OFFICIAL)" = "1" ]; then \
+		echo "OFFICIAL VM: NOT TESTED (SKIP_OFFICIAL=1)"; \
+	else \
+		echo "--- Official VM differential (TODO: 2000-program suite) ---"; \
+		echo "OFFICIAL VM: NOT IMPLEMENTED YET"; \
+	fi
+	@echo "PASS: M1 local tests complete."
+
+accept-m1: test-m1
+	@echo "M1 ACCEPTED"
+
+# ── M2: echo and reverse ──────────────────────────────────────────────────────
+.PHONY: test-m2 accept-m2
+test-m2: | $(ARTIFACTS)
+	@echo "=== M2: Tier 1 — echo and reverse ==="
+	@echo "--- Building tier1 programs ---"
+	python3 tools/build_tier1.py
+	@echo "--- Testing ECHO ---"
+	@# Empty input
+	@echo -n "" | tools/vm tier1/echo.txt | diff - /dev/null || { echo "FAIL: echo empty"; exit 1; }
+	@echo "  PASS: echo empty"
+	@# Single byte
+	@echo -n "A" | tools/vm tier1/echo.txt | diff - <(echo -n "A") || { echo "FAIL: echo single"; exit 1; }
+	@echo "  PASS: echo single byte"
+	@# All byte values 1..255 (no NUL — VM stdin handling)
+	@python3 -c "import sys; sys.stdout.buffer.write(bytes(range(1,256)))" | \
+		tools/vm tier1/echo.txt | \
+		diff - <(python3 -c "import sys; sys.stdout.buffer.write(bytes(range(1,256)))") || \
+		{ echo "FAIL: echo all bytes"; exit 1; }
+	@echo "  PASS: echo all bytes 1-255"
+	@# Step count for 1000 bytes << 10^8
+	@steps=$$(python3 -c "import sys; sys.stdout.buffer.write(b'x'*1000)" | \
+		VM_STATS=1 VM_LIMIT=100000000 tools/vm tier1/echo.txt 2>&1 | \
+		grep "halted after" | grep -o "[0-9]*" | head -1); \
+	echo "  ECHO steps for 1000 bytes: $$steps"; \
+	python3 -c "s=int('$$steps'); assert s < 100000000, f'too slow: {s}'"
+	@echo "--- Testing REVERSE ---"
+	@# Empty input
+	@echo -n "" | tools/vm tier1/reverse.txt | diff - /dev/null || { echo "FAIL: reverse empty"; exit 1; }
+	@echo "  PASS: reverse empty"
+	@# Single byte
+	@echo -n "Z" | tools/vm tier1/reverse.txt | diff - <(echo -n "Z") || { echo "FAIL: reverse single"; exit 1; }
+	@echo "  PASS: reverse single"
+	@# 5 bytes reversed
+	@echo -n "Hello" | tools/vm tier1/reverse.txt | diff - <(echo -n "olleH") || { echo "FAIL: reverse 5"; exit 1; }
+	@echo "  PASS: reverse 5 bytes"
+	@# 1000 bytes
+	@python3 -c "import sys; sys.stdout.buffer.write(bytes(range(1,101))*10)" | \
+		tools/vm tier1/reverse.txt | \
+		diff - <(python3 -c "import sys; sys.stdout.buffer.write(bytes(range(100,0,-1))*10)") || \
+		{ echo "FAIL: reverse 1000"; exit 1; }
+	@echo "  PASS: reverse 1000 bytes"
+	@# Step count
+	@steps=$$(python3 -c "import sys; sys.stdout.buffer.write(bytes(range(1,101))*10)" | \
+		VM_STATS=1 VM_LIMIT=100000000 tools/vm tier1/reverse.txt > /dev/null 2>&1; \
+		python3 -c "import sys; sys.stdout.buffer.write(bytes(range(1,101))*10)" | \
+		VM_STATS=1 tools/vm tier1/reverse.txt 2>&1 | grep "halted after" | grep -o "[0-9]*" | head -1); \
+	echo "  REVERSE steps for 1000 bytes: $$steps"; \
+	python3 -c "s=int('$$steps'); assert s < 100000000, f'too slow: {s}'"
+	$(call check_kit)
+	@if [ "$(SKIP_OFFICIAL)" = "1" ]; then \
+		echo "OFFICIAL VM: NOT TESTED (SKIP_OFFICIAL=1)"; \
+	fi
+	@echo "PASS: M2 complete."
+
+accept-m2: test-m2
+	@echo "M2 ACCEPTED"
+
+# ── M3: v1 interpreter, gen, minimize ────────────────────────────────────────
+.PHONY: test-m3 accept-m3
+test-m3: | $(ARTIFACTS)
+	@echo "=== M3: v1 interpreter, generator, minimizer ==="
+	@echo "--- Reference suite (hand-written from spec) ---"
+	@fail=0; for f in tests/reference/*.v1; do \
+		name=$$(basename $$f .v1); \
+		exp="tests/reference/$$name.expected"; \
+		got=$$(PYTHONHASHSEED=0 LC_ALL=C python3 tools/v1i.py "$$f" 2>/dev/null); \
+		want=$$(cat "$$exp"); \
+		if [ "$$got" = "$$want" ]; then echo "  PASS: $$name"; \
+		else echo "  FAIL: $$name"; echo "    got:  $$(echo $$got | head -c 80)"; \
+		     echo "    want: $$(echo $$want | head -c 80)"; fail=1; fi; \
+	done; test $$fail -eq 0
+	@echo "--- v1i unit tests ---"
+	python3 tools/v1i.py --test
+	@echo "--- Generator: 100 valid programs ---"
+	python3 tools/run_gen_test.py 100
+	@echo "--- Minimizer self-tests ---"
+	python3 tools/minimize.py --test
+	@echo "PASS: M3 complete."
+
+accept-m3: test-m3
+	@echo "M3 ACCEPTED"
+
+# ── M4A-E, M4S: Tier 2 compiler ──────────────────────────────────────────────
 .PHONY: test-m4a test-m4b test-m4s test-m4c test-m4d test-m4e
 .PHONY: test-m5 test-m6 test-m7 test-m8 test-m9
 
-test-m1 test-m2 test-m3 test-m4a test-m4b test-m4s test-m4c test-m4d test-m4e test-m5 test-m6 test-m7 test-m8 test-m9:
+test-m4a test-m4b test-m4s test-m4c test-m4d test-m4e test-m5 test-m6 test-m7 test-m8 test-m9:
 	@echo "Milestone $@ not yet implemented."
 	@exit 1

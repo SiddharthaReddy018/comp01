@@ -1,0 +1,25 @@
+// tests/reference/eval_order.v1
+// Left-to-right evaluation order (from spec: "evaluated left to right")
+// Uses getc() to test order: reads bytes in order and verifies.
+// Without stdin, test via global side effects.
+// f() increments counter and returns it; call f()+f()*f() = 1+2*3 = 7 (if LR eval)
+// vs f()*f()+f() = 1*2+3 = 5 (if ambiguous)
+// BUT spec says left-to-right for binary operators too:
+//   f() + f() * f() with LR and precedence (* before +):
+//     first evaluate f()+X where X is f()*f(): 
+//       Actually precedence: (f()) + (f() * f()) 
+//       With LR: f() first = 1, then f()*f() = 2*3 = 6 (LR within mult)
+//       Result = 1 + 6 = 7. 
+// Expected output: "7\n"
+var counter;
+func inc() {
+    counter = counter + 1;
+    return counter;
+}
+func main() {
+    var result;
+    counter = 0;
+    result = inc() + inc() * inc();   // 1 + 2*3 = 7 (LR eval, * before +)
+    putc(48 + result);
+    putc(10);
+}

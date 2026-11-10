@@ -1,0 +1,23 @@
+// tests/reference/recursion_max.v1
+// Recursion to depth 1000 must work (from spec: "Recursion at most 1,000 calls deep")
+// Expected output: "1\n" (computed: sum of 1 added 1000 times = 1000, then 1000%10+48 = '8', hmm)
+// Let's make it simpler: recurse 1000 deep and return 1000, then print the last digit.
+// 1000 % 10 = 0 → '0'? Let's return depth and take mod 10:
+// We can't use %, but: (depth / 10 * 10) trick via repeated sub.
+// Simplest: just return 1 from base, add 1 each level. Result=1000. Print "done\n".
+func recurse(n) {
+    if (n == 0) {
+        return 1;
+    }
+    return 1 + recurse(n - 1);
+}
+func main() {
+    var r;
+    r = recurse(1000);
+    // r = 1001. We just check it's nonzero.
+    if (r == 1001) {
+        putc(111); // 'o'
+        putc(107); // 'k'
+        putc(10);
+    }
+}

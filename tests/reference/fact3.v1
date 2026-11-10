@@ -1,0 +1,13 @@
+// tests/reference/fact3.v1
+// Spec example: fact(3) = 6
+// Expected output: "6\n"
+func fact(n) {
+    if (n < 2) {
+        return 1;
+    }
+    return n * fact(n - 1);
+}
+func main() {
+    putc(48 + fact(3));
+    putc(10);
+}

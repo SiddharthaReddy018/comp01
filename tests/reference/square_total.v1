@@ -1,0 +1,21 @@
+// tests/reference/square_total.v1
+// Spec example: square/total program
+// Computes sum of squares 1..10 = 385, then checks == 385.
+// Expected output: "ok\n"
+var total;
+func square(x) {
+    return x * x;
+}
+func main() {
+    var i;
+    i = 1;
+    while (i <= 10) {
+        total = total + square(i);
+        i = i + 1;
+    }
+    if (total == 385) {
+        putc(111); // 'o'
+        putc(107); // 'k'
+        putc(10);  // '\n'
+    }
+}

@@ -1,0 +1,22 @@
+// tests/reference/signed_cmp.v1
+// Signed comparison boundary tests (from spec section 2A):
+//   "< <= > >= compare TRUE signed values even when difference overflows"
+//   "2000000000 < -2000000000 is 0"
+//   "-2000000000 < 2000000000 is 1"
+// Expected output: "0\n1\n1\n0\n1\n0\n"
+func putnum(n) {
+    putc(48 + n);
+    putc(10);
+}
+func main() {
+    var a;
+    var b;
+    a = 2000000000;
+    b = -2000000000;
+    putnum(a < b);     // 0
+    putnum(b < a);     // 1
+    putnum(b <= a);    // 1
+    putnum(a <= b);    // 0
+    putnum(a > b);     // 1
+    putnum(b > a);     // 0
+}

@@ -1,0 +1,14 @@
+// tests/reference/fallthrough.v1
+// A function that ends without return returns 0 (from spec: "A function that ends without return returns 0")
+// Expected output: "0\n"
+func no_return() {
+    var x;
+    x = 42;
+    // no return statement — falls off, returns 0
+}
+func main() {
+    var r;
+    r = no_return();
+    putc(48 + r);    // 48 + 0 = '0'
+    putc(10);
+}

@@ -1,0 +1,16 @@
+// tests/reference/local_hide.v1
+// Local variable hides global of the same name (from spec)
+// Expected output: "5\n3\n"
+var x;
+func set_x() {
+    var x;    // local x, hides global x
+    x = 5;
+    putc(48 + x);    // prints local x = 5
+    putc(10);
+}
+func main() {
+    x = 3;
+    set_x();
+    putc(48 + x);    // prints global x = 3 (unchanged by local)
+    putc(10);
+}

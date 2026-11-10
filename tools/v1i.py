@@ -431,6 +431,8 @@ class Interpreter:
         self.stdout = stdout or sys.stdout.buffer
         self._input_ended = False
         self._depth = -1  # -1 so main() starts at depth 0
+        self._steps = 0
+        self._step_limit = None  # set via --step-limit flag
 
     def run(self):
         parser = Parser(self.src)
@@ -535,6 +537,9 @@ class Interpreter:
         elif k == 'while':
             while self._eval(stmt['cond'], lenv, genv, arr_data, func_table) != 0:
                 self._exec_block(stmt['body'], lenv, genv, arr_data, func_table)
+                self._steps += 1
+                if self._step_limit and self._steps > self._step_limit:
+                    raise RuntimeError_(f"Step limit {self._step_limit} exceeded (infinite loop?)")
 
         elif k == 'return':
             val = wrap32(self._eval(stmt['expr'], lenv, genv, arr_data, func_table))
@@ -634,15 +639,25 @@ def main():
         _run_tests()
         return
 
-    if len(sys.argv) < 2:
-        print("usage: v1i.py program.v1 [< input]", file=sys.stderr)
+    # Parse --step-limit N
+    step_limit = None
+    args = sys.argv[1:]
+    if '--step-limit' in args:
+        idx = args.index('--step-limit')
+        step_limit = int(args[idx + 1])
+        args = args[:idx] + args[idx + 2:]
+
+    if not args:
+        print("usage: v1i.py program.v1 [--step-limit N] [< input]", file=sys.stderr)
         sys.exit(1)
 
-    with open(sys.argv[1], 'r') as f:
+    with open(args[0], 'r') as f:
         src = f.read()
 
     try:
-        interpret(src, sys.stdin.buffer, sys.stdout.buffer)
+        interp = Interpreter(src, sys.stdin.buffer, sys.stdout.buffer)
+        interp._step_limit = step_limit
+        interp.run()
     except (LexError, ParseError, RuntimeError_) as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)

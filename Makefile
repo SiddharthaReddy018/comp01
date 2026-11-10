@@ -180,7 +180,18 @@ test-m5: test-m4
 accept-m5: test-m5
 	@echo "M5 ACCEPTED"
 
-.PHONY: test-m6 test-m7 test-m8 test-m9
-test-m6 test-m7 test-m8 test-m9:
+.PHONY: accept-m6
+test-m6: test-m5
+	@echo "=== M6: Tier 1 bigmul + hanoi (compiled by Tier 2) ==="
+	python3 tier2/compile.py < tier1/bigmul.v1 > tier1/bigmul.txt
+	python3 tier2/compile.py < tier1/hanoi.v1 > tier1/hanoi.txt
+	python3 tools/test_tier1.py
+	@echo "PASS: M6 complete."
+
+accept-m6: test-m6
+	@echo "M6 ACCEPTED"
+
+.PHONY: test-m7 test-m8 test-m9
+test-m7 test-m8 test-m9:
 	@echo "Milestone $@ not yet implemented."
 	@exit 1

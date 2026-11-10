@@ -1,0 +1,85 @@
+// bigmul: read two decimal lines (<=40 digits), print product + newline.
+var c;
+var n;
+var la;
+var lb;
+var i;
+var j;
+var k;
+var cur;
+var q;
+var top;
+var done;
+array a[41];
+array b[41];
+array r[82];
+array t[41];
+
+func readline() {
+    n = 0;
+    c = getc();
+    while (c >= 48) {
+        if (c <= 57) {
+            t[n] = c - 48;
+            n = n + 1;
+        }
+        c = getc();
+    }
+    return n;
+}
+
+func main() {
+    readline();
+    la = n;
+    i = 0;
+    while (i < la) {
+        a[i] = t[la - 1 - i];
+        i = i + 1;
+    }
+    readline();
+    lb = n;
+    i = 0;
+    while (i < lb) {
+        b[i] = t[lb - 1 - i];
+        i = i + 1;
+    }
+    i = 0;
+    while (i < la) {
+        j = 0;
+        while (j < lb) {
+            r[i + j] = r[i + j] + a[i] * b[j];
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    k = 0;
+    while (k < 81) {
+        cur = r[k];
+        q = 0;
+        while (cur >= 10) {
+            cur = cur - 10;
+            q = q + 1;
+        }
+        r[k] = cur;
+        r[k + 1] = r[k + 1] + q;
+        k = k + 1;
+    }
+    top = 80;
+    done = 0;
+    while (done == 0) {
+        if (top == 0) {
+            done = 1;
+        } else {
+            if (r[top] == 0) {
+                top = top - 1;
+            } else {
+                done = 1;
+            }
+        }
+    }
+    while (top >= 0) {
+        putc(r[top] + 48);
+        top = top - 1;
+    }
+    putc(10);
+}

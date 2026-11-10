@@ -1,0 +1,27 @@
+// hanoi: read n (1..8), print moves "AC\n" etc. A=source, C=target, B=spare.
+var c;
+var n;
+
+func hanoi(m, from, to, via) {
+    if (m == 0) {
+        return 0;
+    }
+    hanoi(m - 1, from, via, to);
+    putc(from);
+    putc(to);
+    putc(10);
+    hanoi(m - 1, via, to, from);
+    return 0;
+}
+
+func main() {
+    n = 0;
+    c = getc();
+    while (c >= 48) {
+        if (c <= 57) {
+            n = n * 10 + (c - 48);
+        }
+        c = getc();
+    }
+    hanoi(n, 65, 67, 66);
+}

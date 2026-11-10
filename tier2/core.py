@@ -1,0 +1,830 @@
+#!/usr/bin/env python3
+"""
+tier2/core.py — v1 to SUBLEQ compiler (Tier 2).
+
+Reads v1 source from stdin, prints SUBLEQ machine program integers to stdout.
+
+Architecture:
+  - Single pass: build symbol tables then emit SUBLEQ via asm.py backend.
+  - Return mechanism: each function has one return-jump instruction whose
+    c-field is patched per call site at runtime (self-modifying SUBLEQ).
+  - Array access: self-modifying SUBLEQ + post-link fixup for static addrs.
+  - Recursion: not yet supported (raises CompileError).
+  - Multiply: O(|b|) repeated-addition loop (documented limitation).
+"""
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from tools.asm import Assembler, FIXED
+from tools.spec_limits import (
+    N, MAX_SOURCE_BYTES, MAX_PARAMS, MAX_NAME_LEN, MAX_RECURSION_DEPTH
+)
+
+MAX_FRAME_SIZE = 128   # max cells per recursive frame (params+locals+temps)
+
+# ════════════════════════════════════════════════════════════════════════════
+# LEXER
+# ════════════════════════════════════════════════════════════════════════════
+
+KEYWORDS = {'var', 'array', 'func', 'if', 'else', 'while', 'return', 'getc', 'putc'}
+
+TK_NAME   = 'NAME';  TK_INT  = 'INT';   TK_SEMI = ';'
+TK_COMMA  = ',';     TK_LPAR = '(';     TK_RPAR = ')'
+TK_LBRACE = '{';     TK_RBRACE = '}';   TK_LBRAK = '['; TK_RBRAK = ']'
+TK_EQ     = '=';     TK_PLUS = '+';     TK_MINUS = '-'; TK_STAR = '*'
+TK_LT     = '<';     TK_LE   = '<=';    TK_GT   = '>';  TK_GE   = '>='
+TK_EQEQ   = '==';   TK_NEQ  = '!=';    TK_EOF  = 'EOF'
+
+
+class CompileError(Exception):
+    pass
+
+
+class Lexer:
+    def __init__(self, src):
+        self.src = src; self.pos = 0; self.line = 1
+        self._tok = None; self._val = None; self.advance()
+
+    def _skip(self):
+        while self.pos < len(self.src):
+            c = self.src[self.pos]
+            if c == '\n': self.line += 1; self.pos += 1
+            elif c in ' \t\r': self.pos += 1
+            elif c == '/' and self.pos+1 < len(self.src) and self.src[self.pos+1] == '/':
+                while self.pos < len(self.src) and self.src[self.pos] != '\n': self.pos += 1
+            else: break
+
+    def advance(self):
+        self._skip()
+        if self.pos >= len(self.src): self._tok = TK_EOF; self._val = None; return
+        p = self.pos; c = self.src[p]
+        if c.isdigit():
+            q = p
+            while q < len(self.src) and self.src[q].isdigit(): q += 1
+            self._tok = TK_INT; self._val = int(self.src[p:q]); self.pos = q; return
+        if c.isalpha() or c == '_':
+            q = p
+            while q < len(self.src) and (self.src[q].isalnum() or self.src[q]=='_'): q += 1
+            word = self.src[p:q]
+            if len(word) > MAX_NAME_LEN:
+                raise CompileError(f"Name too long: {word!r} at line {self.line}")
+            self._tok = word if word in KEYWORDS else TK_NAME
+            self._val = word; self.pos = q; return
+        two = self.src[p:p+2]
+        for s, t in [('<=',TK_LE),('>=',TK_GE),('==',TK_EQEQ),('!=',TK_NEQ)]:
+            if two == s: self._tok = t; self._val = s; self.pos = p+2; return
+        sym = {';':TK_SEMI,',':TK_COMMA,'(':TK_LPAR,')':TK_RPAR,
+               '{':TK_LBRACE,'}':TK_RBRACE,'[':TK_LBRAK,']':TK_RBRAK,
+               '=':TK_EQ,'+':TK_PLUS,'-':TK_MINUS,'*':TK_STAR,'<':TK_LT,'>':TK_GT}
+        if c in sym: self._tok = sym[c]; self._val = c; self.pos = p+1; return
+        raise CompileError(f"Unknown character {c!r} at line {self.line}")
+
+    @property
+    def tok(self): return self._tok
+    @property
+    def val(self): return self._val
+
+    def eat(self, expected):
+        if self._tok != expected:
+            raise CompileError(f"Expected {expected!r}, got {self._tok!r} at line {self.line}")
+        v = self._val; self.advance(); return v
+
+    def kw(self, k): return self._tok == k
+    def at(self, t): return self._tok == t
+
+    def eat_name(self):
+        if self._tok != TK_NAME:
+            raise CompileError(f"Expected name, got {self._tok!r} at line {self.line}")
+        v = self._val; self.advance(); return v
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# PARSER
+# ════════════════════════════════════════════════════════════════════════════
+
+class Parser:
+    def __init__(self, src): self.lex = Lexer(src)
+
+    def parse_program(self):
+        globals_list = []; arrays_dict = {}; funcs_list = []
+        while not self.lex.at(TK_EOF):
+            if self.lex.kw('var'):
+                self.lex.advance(); name = self.lex.eat_name(); self.lex.eat(TK_SEMI)
+                globals_list.append(name)
+            elif self.lex.kw('array'):
+                self.lex.advance(); name = self.lex.eat_name()
+                self.lex.eat(TK_LBRAK); size = self.lex.eat(TK_INT); self.lex.eat(TK_RBRAK)
+                self.lex.eat(TK_SEMI); arrays_dict[name] = size
+            elif self.lex.kw('func'):
+                funcs_list.append(self._parse_func())
+            else:
+                raise CompileError(f"Unexpected {self.lex.tok!r} at line {self.lex.line}")
+        return globals_list, arrays_dict, funcs_list
+
+    def _parse_func(self):
+        self.lex.advance(); name = self.lex.eat_name(); self.lex.eat(TK_LPAR)
+        params = []
+        if not self.lex.at(TK_RPAR):
+            params.append(self.lex.eat_name())
+            while self.lex.at(TK_COMMA): self.lex.advance(); params.append(self.lex.eat_name())
+        self.lex.eat(TK_RPAR)
+        return {'name': name, 'params': params, 'body': self._parse_block()}
+
+    def _parse_block(self):
+        self.lex.eat(TK_LBRACE); stmts = []
+        while not self.lex.at(TK_RBRACE): stmts.append(self._parse_stmt())
+        self.lex.eat(TK_RBRACE); return stmts
+
+    def _parse_stmt(self):
+        L = self.lex
+        if L.kw('var'):
+            L.advance(); name = L.eat_name(); L.eat(TK_SEMI)
+            return {'kind':'var_decl','name':name}
+        if L.kw('if'):
+            L.advance(); L.eat(TK_LPAR); cond = self._parse_expr(); L.eat(TK_RPAR)
+            then = self._parse_block()
+            else_ = None
+            if L.kw('else'): L.advance(); else_ = self._parse_block()
+            return {'kind':'if','cond':cond,'then':then,'else_':else_}
+        if L.kw('while'):
+            L.advance(); L.eat(TK_LPAR); cond = self._parse_expr(); L.eat(TK_RPAR)
+            return {'kind':'while','cond':cond,'body':self._parse_block()}
+        if L.kw('return'):
+            L.advance(); e = self._parse_expr(); L.eat(TK_SEMI)
+            return {'kind':'return','expr':e}
+        if L.kw('putc'):
+            L.advance(); L.eat(TK_LPAR); e = self._parse_expr(); L.eat(TK_RPAR); L.eat(TK_SEMI)
+            return {'kind':'call_stmt','name':'putc','args':[e]}
+        if L.kw('getc'):
+            L.advance(); L.eat(TK_LPAR); L.eat(TK_RPAR); L.eat(TK_SEMI)
+            return {'kind':'call_stmt','name':'getc','args':[]}
+        if L.at(TK_NAME):
+            name = L.eat_name()
+            if L.at(TK_LBRAK):
+                L.advance(); idx = self._parse_expr(); L.eat(TK_RBRAK)
+                L.eat(TK_EQ); val = self._parse_expr(); L.eat(TK_SEMI)
+                return {'kind':'arr_assign','name':name,'idx':idx,'val':val}
+            if L.at(TK_EQ):
+                L.advance(); val = self._parse_expr(); L.eat(TK_SEMI)
+                return {'kind':'assign','name':name,'val':val}
+            if L.at(TK_LPAR):
+                L.advance(); args = []
+                if not L.at(TK_RPAR):
+                    args.append(self._parse_expr())
+                    while L.at(TK_COMMA): L.advance(); args.append(self._parse_expr())
+                L.eat(TK_RPAR); L.eat(TK_SEMI)
+                return {'kind':'call_stmt','name':name,'args':args}
+        raise CompileError(f"Unexpected {L.tok!r} at line {L.line}")
+
+    def _parse_expr(self): return self._parse_cmp()
+
+    def _parse_cmp(self):
+        left = self._parse_add()
+        OPS = {TK_LT:'<',TK_LE:'<=',TK_GT:'>',TK_GE:'>=',TK_EQEQ:'==',TK_NEQ:'!='}
+        while self.lex.tok in OPS:
+            op = OPS[self.lex.tok]; self.lex.advance()
+            left = {'kind':'binop','op':op,'left':left,'right':self._parse_add()}
+        return left
+
+    def _parse_add(self):
+        left = self._parse_mul()
+        while self.lex.at(TK_PLUS) or self.lex.at(TK_MINUS):
+            op = self.lex.val; self.lex.advance()
+            left = {'kind':'binop','op':op,'left':left,'right':self._parse_mul()}
+        return left
+
+    def _parse_mul(self):
+        left = self._parse_unary()
+        while self.lex.at(TK_STAR):
+            self.lex.advance()
+            left = {'kind':'binop','op':'*','left':left,'right':self._parse_unary()}
+        return left
+
+    def _parse_unary(self):
+        if self.lex.at(TK_MINUS):
+            self.lex.advance()
+            return {'kind':'unary','op':'-','expr':self._parse_unary()}
+        return self._parse_primary()
+
+    def _parse_primary(self):
+        L = self.lex
+        if L.at(TK_INT): v = L.eat(TK_INT); return {'kind':'int','val':v}
+        if L.at(TK_LPAR): L.advance(); e = self._parse_expr(); L.eat(TK_RPAR); return e
+        if L.kw('getc'): L.advance(); L.eat(TK_LPAR); L.eat(TK_RPAR); return {'kind':'getc'}
+        if L.kw('putc'):
+            L.advance(); L.eat(TK_LPAR); e = self._parse_expr(); L.eat(TK_RPAR)
+            return {'kind':'putc','expr':e}
+        if L.at(TK_NAME):
+            name = L.eat_name()
+            if L.at(TK_LBRAK):
+                L.advance(); idx = self._parse_expr(); L.eat(TK_RBRAK)
+                return {'kind':'arr_read','name':name,'idx':idx}
+            if L.at(TK_LPAR):
+                L.advance(); args = []
+                if not L.at(TK_RPAR):
+                    args.append(self._parse_expr())
+                    while L.at(TK_COMMA): L.advance(); args.append(self._parse_expr())
+                L.eat(TK_RPAR)
+                return {'kind':'call','name':name,'args':args}
+            return {'kind':'var','name':name}
+        raise CompileError(f"Unexpected {L.tok!r} in expression at line {L.line}")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# COMPILER
+# ════════════════════════════════════════════════════════════════════════════
+
+def wrap32(x):
+    x = x & 0xFFFFFFFF
+    if x >= 0x80000000: x -= 0x100000000
+    return x
+
+
+class Compiler:
+    def __init__(self):
+        self.a = Assembler()
+        self._globals = {}       # name -> {'kind','tag','size',...}
+        self._funcs   = {}       # name -> FuncInfo dict
+        self._const_pool = {}    # int -> data_tag
+        self._label_ctr  = 0    # deterministic counter
+        self._arr_patches  = [] # post-link array patch records
+        self._call_sites   = [] # post-link call site records
+        self._bootstrap    = None
+
+    # ── Labels ───────────────────────────────────────────────────────────────
+
+    def _new_label(self, p='L'):
+        self._label_ctr += 1
+        return f'_{p}{self._label_ctr}'
+
+    # ── Constants ────────────────────────────────────────────────────────────
+
+    def _const(self, v):
+        v = wrap32(v)
+        if v not in self._const_pool:
+            self._const_pool[v] = self.a.alloc(f'C{len(self._const_pool)}', v)
+        return self._const_pool[v]
+
+    # ── Temps ────────────────────────────────────────────────────────────────
+
+    def _alloc_temp(self, fname):
+        fi = self._funcs[fname]
+        idx = fi['next_temp']; fi['next_temp'] += 1
+        tag = self.a.alloc(f'T_{fname}_{idx}', 0)
+        fi['temp_tags'].append(tag)
+        return tag
+
+    # ── Lookup ───────────────────────────────────────────────────────────────
+
+    def _lookup(self, name, fname):
+        lenv = self._funcs.get(fname, {}).get('lenv', {})
+        if name in lenv: return lenv[name]
+        if name in self._globals: return self._globals[name]['tag']
+        raise CompileError(f"Undefined variable: {name!r}")
+
+    # ── Branch helpers (data cells only — not SCR registers) ─────────────────
+
+    def _branch_if_zero(self, cell, lbl):
+        """Branch to lbl if mem[cell]==0. cell must be a data cell."""
+        skip = self._new_label('bnz')
+        self.a.branch_if_neg(cell, skip)
+        self.a.copy(cell, 'SCR1', scratch='SCR2')
+        self.a.negate_inplace('SCR1', scratch1='SCR2', scratch2='SCR3')
+        self.a.branch_if_neg('SCR1', skip)
+        self.a.jump(lbl)
+        self.a.label(skip)
+
+    def _branch_if_nonzero(self, cell, lbl):
+        """Branch to lbl if mem[cell]!=0. cell must be a data cell."""
+        self.a.branch_if_neg(cell, lbl)
+        self.a.copy(cell, 'SCR1', scratch='SCR2')
+        self.a.negate_inplace('SCR1', scratch1='SCR2', scratch2='SCR3')
+        self.a.branch_if_neg('SCR1', lbl)
+
+    # ── Signed comparison ─────────────────────────────────────────────────────
+
+    def _emit_signed_cmp(self, x_cell, y_cell, result_cell, op):
+        """result_cell = (x op y) ? 1 : 0  — true signed per spec."""
+        one  = self._const(1); zero = self._const(0)
+        tru  = self._new_label('ct'); fal = self._new_label('cf')
+        end  = self._new_label('ce'); same = self._new_label('cs')
+        xneg = self._new_label('cxn'); xge_yneg = self._new_label('cxyn')
+
+        self.a.branch_if_neg(x_cell, xneg)
+
+        # x >= 0
+        self.a.branch_if_neg(y_cell, xge_yneg)
+        self.a.jump(same)
+
+        self.a.label(xge_yneg)       # x>=0, y<0 → x>y
+        self.a.jump(tru if op in ('>', '>=', '!=') else fal)
+
+        self.a.label(xneg)           # x<0
+        self.a.branch_if_neg(y_cell, same)
+        # x<0, y>=0 → x<y
+        self.a.jump(tru if op in ('<', '<=', '!=') else fal)
+
+        self.a.label(same)
+        # Same sign: diff = x-y, no overflow
+        self.a.copy(x_cell, 'SCR1', scratch='SCR2')
+        self.a.sub(y_cell, 'SCR1')   # SCR1 = x-y
+
+        if op == '<':
+            self.a.branch_if_neg('SCR1', tru)
+        elif op == '<=':
+            # true iff NOT diff>0, i.e., -diff<0 → false
+            self.a.copy('SCR1', 'SCR2', scratch='SCR3')
+            self.a.negate_inplace('SCR2', scratch1='SCR3', scratch2='SCR1')
+            self.a.branch_if_neg('SCR2', fal)
+            self.a.jump(tru)
+        elif op == '>':
+            self.a.copy('SCR1', 'SCR2', scratch='SCR3')
+            self.a.negate_inplace('SCR2', scratch1='SCR3', scratch2='SCR1')
+            self.a.branch_if_neg('SCR2', tru)
+        elif op == '>=':
+            self.a.branch_if_neg('SCR1', fal)
+            self.a.jump(tru)
+        elif op == '==':
+            self.a.branch_if_neg('SCR1', fal)
+            self.a.copy('SCR1', 'SCR2', scratch='SCR3')
+            self.a.negate_inplace('SCR2', scratch1='SCR3', scratch2='SCR1')
+            self.a.branch_if_neg('SCR2', fal)
+            self.a.jump(tru)
+        elif op == '!=':
+            self.a.branch_if_neg('SCR1', tru)
+            self.a.copy('SCR1', 'SCR2', scratch='SCR3')
+            self.a.negate_inplace('SCR2', scratch1='SCR3', scratch2='SCR1')
+            self.a.branch_if_neg('SCR2', tru)
+
+        self.a.jump(fal)
+        self.a.label(tru); self.a.copy(one,  result_cell); self.a.jump(end)
+        self.a.label(fal); self.a.copy(zero, result_cell)
+        self.a.label(end)
+
+    # ── Signed multiply (O(|b|) loop — documented limitation) ─────────────────
+
+    def _emit_multiply(self, a_cell, b_cell, result_cell):
+        zero = self._const(0); one = self._const(1); c2 = self._const(2)
+        ma = self.a.alloc(self._new_label('ma'), 0)
+        mb = self.a.alloc(self._new_label('mb'), 0)
+        mr = self.a.alloc(self._new_label('mr'), 0)
+        sg = self.a.alloc(self._new_label('ms'), 0)
+
+        self.a.copy(a_cell, ma); self.a.copy(b_cell, mb)
+        self.a.copy(zero, mr);   self.a.copy(zero, sg)
+
+        # Handle sign of ma
+        L1 = self._new_label('mn'); L2 = self._new_label('mp')
+        self.a.branch_if_neg(ma, L1); self.a.jump(L2)
+        self.a.label(L1); self.a.negate_inplace(ma); self.a.add(one, sg)
+        self.a.label(L2)
+
+        # Handle sign of mb
+        L3 = self._new_label('mbn'); L4 = self._new_label('mbp')
+        self.a.branch_if_neg(mb, L3); self.a.jump(L4)
+        self.a.label(L3); self.a.negate_inplace(mb); self.a.add(one, sg)
+        self.a.label(L4)
+
+        # If sg==2 (both negative → positive), set sg=0
+        Lsk = self._new_label('s2sk')
+        self.a.copy(sg, 'SCR1', scratch='SCR2')
+        self.a.sub(c2, 'SCR1')                              # SCR1 = sg-2
+        self.a.branch_if_neg('SCR1', Lsk)                   # sg<2 → skip
+        self.a.copy('SCR1', 'SCR2', scratch='SCR3')
+        self.a.negate_inplace('SCR2', scratch1='SCR3', scratch2='SCR1')
+        self.a.branch_if_neg('SCR2', Lsk)                   # sg>2 → skip (can't happen)
+        self.a.copy(zero, sg)                                # sg==2 → set 0
+        self.a.label(Lsk)
+
+        # Loop: mr += ma, mb times
+        Lloop = self._new_label('ml'); Lexit = self._new_label('me')
+        self.a.label(Lloop)
+        self.a.branch_if_neg(mb, Lexit)
+        self._branch_if_zero(mb, Lexit)
+        self.a.add(ma, mr)
+        self.a.sub(one, mb)
+        self.a.jump(Lloop)
+        self.a.label(Lexit)
+
+        # Apply sign
+        Lok = self._new_label('sok')
+        self._branch_if_zero(sg, Lok)
+        self.a.negate_inplace(mr)
+        self.a.label(Lok)
+
+        self.a.copy(mr, result_cell)
+
+    # ── Array write: arr[idx] = val ───────────────────────────────────────────
+
+    def _emit_arr_write(self, base_tag, idx_cell, val_cell):
+        """Self-modifying SUBLEQ array write with post-link fixup."""
+        ptr  = self.a.alloc(self._new_label('wp'),  0)
+        nptr = self.a.alloc(self._new_label('wnp'), 0)
+        nval = self.a.alloc(self._new_label('wnv'), 0)
+
+        self.a.copy(base_tag, ptr);   self.a.add(idx_cell, ptr)
+        self.a.copy(ptr, nptr);       self.a.negate_inplace(nptr)
+        self.a.copy(val_cell, nval);  self.a.negate_inplace(nval)
+
+        # Patch sequences: 2 instrs each set target_field_addr into the patch slots.
+        # Fields to patch: WCLR.a, WCLR.b, WSTO.a (all with runtime ptr).
+        p_ca = len(self.a._code)
+        self.a.instruction(0, 0, self.a.here_plus(3))
+        self.a.instruction(0, nptr, self.a.here_plus(3))
+        p_cb = len(self.a._code)
+        self.a.instruction(0, 0, self.a.here_plus(3))
+        self.a.instruction(0, nptr, self.a.here_plus(3))
+        p_sa = len(self.a._code)
+        self.a.instruction(0, 0, self.a.here_plus(3))
+        self.a.instruction(0, nptr, self.a.here_plus(3))
+
+        wclr = len(self.a._code)
+        self.a.instruction(0, 0, self.a.here_plus(3))   # (ptr,ptr,next) after patch
+        wsto = len(self.a._code)
+        self.a.instruction(0, nval, self.a.here_plus(3)) # (ptr,nval,next) after patch
+
+        self._arr_patches.append(('w', p_ca, p_cb, p_sa, wclr, wsto))
+
+    # ── Array read: result = arr[idx] ────────────────────────────────────────
+
+    def _emit_arr_read(self, base_tag, idx_cell, result_cell):
+        """Self-modifying SUBLEQ array read with post-link fixup."""
+        ptr  = self.a.alloc(self._new_label('rp'),  0)
+        nptr = self.a.alloc(self._new_label('rnp'), 0)
+
+        self.a.copy(base_tag, ptr); self.a.add(idx_cell, ptr)
+        self.a.copy(ptr, nptr);     self.a.negate_inplace(nptr)
+
+        p_rb = len(self.a._code)
+        self.a.instruction(0, 0, self.a.here_plus(3))
+        self.a.instruction(0, nptr, self.a.here_plus(3))
+
+        self.a.clear('SCR1')
+        rlrd = len(self.a._code)
+        self.a.instruction('SCR1', 0, self.a.here_plus(3))  # SCR1 -= mem[ptr]
+
+        self.a.clear(result_cell)
+        self.a.sub('SCR1', result_cell)   # result = -SCR1 = arr[idx]
+
+        self._arr_patches.append(('r', p_rb, rlrd))
+
+    # ── Expression compiler ───────────────────────────────────────────────────
+
+    def _compile_expr(self, node, dest, fname):
+        k = node['kind']
+        if k == 'int':
+            self.a.copy(self._const(node['val']), dest)
+        elif k == 'var':
+            self.a.copy(self._lookup(node['name'], fname), dest)
+        elif k == 'arr_read':
+            g = self._globals.get(node['name'])
+            if g is None or g['kind'] != 'array':
+                raise CompileError(f"Undefined array: {node['name']!r}")
+            it = self._alloc_temp(fname)
+            self._compile_expr(node['idx'], it, fname)
+            self._emit_arr_read(g['base_tag'], it, dest)
+        elif k == 'getc':
+            self.a.getc(dest)
+        elif k == 'putc':
+            et = self._alloc_temp(fname)
+            self._compile_expr(node['expr'], et, fname)
+            self.a.putc(et)
+            self.a.copy(self._const(0), dest)
+        elif k == 'unary':
+            self._compile_expr(node['expr'], dest, fname)
+            self.a.negate_inplace(dest)
+        elif k == 'binop':
+            op = node['op']
+            rt = self._alloc_temp(fname)
+            self._compile_expr(node['left'],  dest, fname)
+            self._compile_expr(node['right'], rt,   fname)
+            if op == '+': self.a.add(rt, dest)
+            elif op == '-': self.a.sub(rt, dest)
+            elif op == '*': self._emit_multiply(dest, rt, dest)
+            elif op in ('<','<=','>','>=','==','!='): self._emit_signed_cmp(dest, rt, dest, op)
+            else: raise CompileError(f"Unknown op: {op!r}")
+        elif k == 'call':
+            self._compile_call(node['name'], node['args'], dest, fname)
+        else:
+            raise CompileError(f"Unknown expr kind: {k!r}")
+
+    # ── Call compilation ──────────────────────────────────────────────────────
+
+    def _compile_call(self, callee, arg_nodes, result_dest, caller):
+        fi = self._funcs.get(callee)
+        if fi is None: raise CompileError(f"Undefined function: {callee!r}")
+        if len(arg_nodes) != len(fi['params']):
+            raise CompileError(f"{callee!r}: expected {len(fi['params'])} args")
+        is_self = (callee == caller)
+
+        # Evaluate args into caller temps
+        arg_temps = []
+        for an in arg_nodes:
+            t = self._alloc_temp(caller); self._compile_expr(an, t, caller); arg_temps.append(t)
+
+        # For self-recursion: snapshot all live cells and push onto stack
+        cells_to_save = []
+        if is_self:
+            cfi = self._funcs[caller]
+            cells_to_save = (list(cfi['param_tags']) + list(cfi['local_tags'])
+                             + list(cfi['temp_tags']))
+            self._emit_push_frame(callee, cells_to_save)
+
+        # Copy temps → callee params
+        for pt, at in zip(fi['param_tags'], arg_temps):
+            self.a.copy(at, pt)
+
+        # Patch callee's return-jump c-field (self-modifying, done at runtime)
+        nrc      = self.a.alloc(self._new_label('nrt'), 0)
+        ret_lbl  = self._new_label('ret')
+        cpa      = len(self.a._code)
+        self.a.instruction(0, 0, self.a.here_plus(3))
+        cpb      = len(self.a._code)
+        self.a.instruction(0, nrc, self.a.here_plus(3))
+
+        self.a.jump(fi['entry_label'])
+        self.a.label(ret_lbl)
+
+        self._call_sites.append({'callee':callee,'nrc':nrc,'ret_lbl':ret_lbl,'cpa':cpa,'cpb':cpb})
+
+        # For self-recursion: pop frame after return
+        if is_self:
+            self._emit_pop_frame(callee, cells_to_save)
+
+        self.a.copy('RET', result_dest)
+
+    # ── Statement compiler ────────────────────────────────────────────────────
+
+    def _compile_stmt(self, node, fname):
+        k = node['kind']
+        if k == 'var_decl':
+            tag = self.a.alloc(f'L_{fname}_{node["name"]}', 0)
+            self._funcs[fname]['lenv'][node['name']] = tag
+            self._funcs[fname]['local_tags'].append(tag)
+        elif k == 'assign':
+            name = node['name']; fi = self._funcs[fname]
+            if name in fi['lenv']: dest = fi['lenv'][name]
+            elif name in self._globals: dest = self._globals[name]['tag']
+            else: raise CompileError(f"Undefined variable: {name!r}")
+            self._compile_expr(node['val'], dest, fname)
+        elif k == 'arr_assign':
+            g = self._globals.get(node['name'])
+            if g is None or g['kind'] != 'array':
+                raise CompileError(f"Undefined array: {node['name']!r}")
+            it = self._alloc_temp(fname); vt = self._alloc_temp(fname)
+            self._compile_expr(node['idx'], it, fname)
+            self._compile_expr(node['val'], vt, fname)
+            self._emit_arr_write(g['base_tag'], it, vt)
+        elif k == 'if':
+            ct = self._alloc_temp(fname)
+            self._compile_expr(node['cond'], ct, fname)
+            el = self._new_label('else'); en = self._new_label('endif')
+            self._branch_if_zero(ct, el)
+            for s in node['then']: self._compile_stmt(s, fname)
+            self.a.jump(en); self.a.label(el)
+            if node['else_']:
+                for s in node['else_']: self._compile_stmt(s, fname)
+            self.a.label(en)
+        elif k == 'while':
+            ll = self._new_label('wl'); xl = self._new_label('wx')
+            ct = self._alloc_temp(fname)
+            self.a.label(ll)
+            self._compile_expr(node['cond'], ct, fname)
+            self._branch_if_zero(ct, xl)
+            for s in node['body']: self._compile_stmt(s, fname)
+            self.a.jump(ll); self.a.label(xl)
+        elif k == 'return':
+            rt = self._alloc_temp(fname)
+            self._compile_expr(node['expr'], rt, fname)
+            self.a.copy(rt, 'RET')
+            self.a.jump(self._funcs[fname]['ret_jmp_lbl'])
+        elif k == 'call_stmt':
+            if node['name'] == 'putc':
+                et = self._alloc_temp(fname)
+                self._compile_expr(node['args'][0], et, fname)
+                self.a.putc(et)
+            elif node['name'] == 'getc':
+                self.a.getc(self._alloc_temp(fname))
+            else:
+                t = self._alloc_temp(fname)
+                self._compile_call(node['name'], node['args'], t, fname)
+        else:
+            raise CompileError(f"Unknown stmt kind: {k!r}")
+
+    # ── Function compiler ──────────────────────────────────────────────────────
+
+    def _compile_func(self, func_ast):
+        fname = func_ast['name']; fi = self._funcs[fname]
+        fi['lenv'] = {}; fi['local_tags'] = []; fi['temp_tags'] = []; fi['next_temp'] = 0
+        for pname, ptag in zip(func_ast['params'], fi['param_tags']):
+            fi['lenv'][pname] = ptag
+
+        self.a.label(fi['entry_label'])
+        for s in func_ast['body']: self._compile_stmt(s, fname)
+
+        # Fall-through return 0
+        self.a.copy(self._const(0), 'RET')
+        # Return-jump instruction: c-field (0) is patched per call site at runtime.
+        self.a.label(fi['ret_jmp_lbl'])
+        fi['ret_jmp_offset'] = len(self.a._code)
+        self.a.instruction(FIXED['NEG1'], FIXED['ZERO'], 0)
+
+    # ── Frame push/pop for self-recursion ────────────────────────────────────
+
+    def _emit_push_frame(self, fname, cells):
+        """Push list of cells onto fname's stack. sp_local incremented per cell."""
+        fi = self._funcs[fname]
+        sp = fi['sp_local']; base = fi['stack_base_tag']
+        for cell in cells:
+            self._emit_arr_write(base, sp, cell)
+            self.a.add(self._const(1), sp)
+
+    def _emit_pop_frame(self, fname, cells):
+        """Pop cells in reverse order from fname's stack."""
+        fi = self._funcs[fname]
+        sp = fi['sp_local']; base = fi['stack_base_tag']
+        for cell in reversed(cells):
+            self.a.sub(self._const(1), sp)
+            self._emit_arr_read(base, sp, cell)
+
+    # ── Recursion detector ────────────────────────────────────────────────────
+
+    def _is_recursive(self, func_ast):
+        def stmts(ss, n):
+            for s in ss:
+                k = s['kind']
+                if k == 'call_stmt' and s['name'] == n: return True
+                if k == 'if':
+                    if stmts(s['then'], n): return True
+                    if s['else_'] and stmts(s['else_'], n): return True
+                if k == 'while' and stmts(s['body'], n): return True
+                e = s.get('val') or s.get('expr')
+                if e and expr(e, n): return True
+                if k == 'arr_assign' and expr(s['idx'], n): return True
+            return False
+        def expr(nd, n):
+            if nd is None: return False
+            k = nd.get('kind')
+            if k == 'call':
+                if nd['name'] == n: return True
+                return any(expr(a, n) for a in nd['args'])
+            if k == 'binop': return expr(nd['left'],n) or expr(nd['right'],n)
+            if k == 'unary': return expr(nd['expr'], n)
+            if k == 'arr_read': return expr(nd['idx'], n)
+            if k == 'putc': return expr(nd['expr'], n)
+            return False
+        return stmts(func_ast['body'], func_ast['name'])
+
+    # ── Compile top-level ─────────────────────────────────────────────────────
+
+    def compile(self, src):
+        # Reset
+        self.a = Assembler(); self._globals = {}; self._funcs = {}
+        self._const_pool = {}; self._label_ctr = 0
+        self._arr_patches = []; self._call_sites = []; self._bootstrap = None
+
+        gl, ad, fl = Parser(src).parse_program()
+
+        # Allocate globals
+        for name in gl:
+            tag = self.a.alloc(f'G_{name}', 0)
+            self._globals[name] = {'kind':'global','tag':tag,'size':1}
+
+        # Allocate arrays (sorted for determinism)
+        for name in sorted(ad.keys()):
+            sz  = ad[name]
+            dt  = self.a.alloc_array(f'ARR_{name}', sz)
+            bt  = self.a.alloc(f'ARR_BASE_{name}', 0)
+            self._globals[name] = {'kind':'array','tag':bt,'size':sz,
+                                   'base_tag':bt,'arr_data_tag':dt}
+
+        # Pre-register all functions
+        func_names = set()
+        for fa in fl:
+            fn = fa['name']
+            if fn in func_names: raise CompileError(f"Duplicate function: {fn!r}")
+            func_names.add(fn)
+            if len(fa['params']) > MAX_PARAMS:
+                raise CompileError(f"Too many params in {fn!r}")
+            is_rec = self._is_recursive(fa)
+            pts = [self.a.alloc(f'P_{fn}_{p}', 0) for p in fa['params']]
+            # For recursive functions: allocate stack storage and sp cell.
+            if is_rec:
+                stk_data = self.a.alloc_array(f'STK_{fn}',
+                                              MAX_RECURSION_DEPTH * MAX_FRAME_SIZE)
+                stk_base = self.a.alloc(f'STK_BASE_{fn}', 0)  # filled post-link
+                sp       = self.a.alloc(f'SP_{fn}', 0)
+            else:
+                stk_data = None; stk_base = None; sp = None
+            self._funcs[fn] = {
+                'params': fa['params'], 'param_tags': pts,
+                'entry_label': f'FUNC_{fn}', 'ret_jmp_lbl': f'RETJMP_{fn}',
+                'ret_jmp_offset': None,
+                'is_recursive': is_rec,
+                'stack_data_tag': stk_data,  # the alloc_array tag
+                'stack_base_tag': stk_base,  # scalar cell holding stk_data address
+                'sp_local': sp,
+                'lenv': {}, 'local_tags': [], 'temp_tags': [], 'next_temp': 0,
+            }
+
+        if 'main' not in self._funcs:
+            raise CompileError("No main() function defined")
+
+        main_fi = self._funcs['main']
+
+        # Bootstrap: patch main's ret-jump c-field → halt, then jump to main
+        nhc = self.a.alloc(self._new_label('nhlt'), 0)   # -halt_addr (post-link)
+        bpa = len(self.a._code)
+        self.a.instruction(0, 0, self.a.here_plus(3))
+        bpb = len(self.a._code)
+        self.a.instruction(0, nhc, self.a.here_plus(3))
+        self.a.jump(main_fi['entry_label'])
+        halt_lbl = self._new_label('halt')
+        self.a.label(halt_lbl)
+        self.a.instruction(FIXED['NEG1'], FIXED['ZERO'], -1)   # pc=-1 → VM halts
+        self._bootstrap = {'nhc':nhc,'halt_lbl':halt_lbl,'bpa':bpa,'bpb':bpb}
+
+        # Compile all functions
+        for fa in fl: self._compile_func(fa)
+
+        # Link
+        words = self.a.link()
+        code_len  = len(self.a._code)
+        data_base = 11 + code_len
+
+        def da(tag):
+            name = tag[1] if isinstance(tag, tuple) else tag
+            off = 0
+            for n in self.a._data_names:
+                if n == name: return data_base + off
+                off += self.a._data_sizes[n]
+            raise KeyError(name)
+
+        # Post-link: array base addresses
+        for g in self._globals.values():
+            if g['kind'] == 'array':
+                words[da(g['base_tag'])] = da(g['arr_data_tag'])
+
+        # Post-link: stack base addresses for recursive functions
+        for finfo in self._funcs.values():
+            if finfo['is_recursive']:
+                words[da(finfo['stack_base_tag'])] = da(finfo['stack_data_tag'])
+
+        # Post-link: array patches
+        for patch in self._arr_patches:
+            if patch[0] == 'w':
+                _, pca, pcb, psa, wclr, wsto = patch
+                Aca = 11 + wclr + 0;  Acb = 11 + wclr + 1;  Asa = 11 + wsto + 0
+                words[11+pca+0] = Aca; words[11+pca+1] = Aca; words[11+pca+3] = Aca
+                words[11+pcb+0] = Acb; words[11+pcb+1] = Acb; words[11+pcb+3] = Acb
+                words[11+psa+0] = Asa; words[11+psa+1] = Asa; words[11+psa+3] = Asa
+            elif patch[0] == 'r':
+                _, prb, rlrd = patch
+                Arb = 11 + rlrd + 1
+                words[11+prb+0] = Arb; words[11+prb+1] = Arb; words[11+prb+3] = Arb
+
+        # Post-link: call sites
+        for site in self._call_sites:
+            cfi = self._funcs[site['callee']]
+            if cfi['ret_jmp_offset'] is None:
+                raise CompileError(f"Function {site['callee']!r} never compiled")
+            cfa = 11 + cfi['ret_jmp_offset'] + 2   # c-field of return-jump instruction
+            words[11+site['cpa']+0] = cfa
+            words[11+site['cpa']+1] = cfa
+            words[11+site['cpb']+0] = cfa
+            ret_addr = 11 + self.a._labels[site['ret_lbl']]
+            words[da(site['nrc'])] = -ret_addr
+
+        # Post-link: bootstrap
+        bs = self._bootstrap
+        mca = 11 + main_fi['ret_jmp_offset'] + 2
+        words[11+bs['bpa']+0] = mca; words[11+bs['bpa']+1] = mca
+        words[11+bs['bpb']+0] = mca
+        halt_addr = 11 + self.a._labels[bs['halt_lbl']]
+        words[da(bs['nhc'])] = -halt_addr
+
+        return words
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# ENTRY POINT
+# ════════════════════════════════════════════════════════════════════════════
+
+def compile_v1(src):
+    return Compiler().compile(src)
+
+
+def main():
+    src = sys.stdin.read()
+    if len(src) > MAX_SOURCE_BYTES:
+        print(f"error: source too large ({len(src)} > {MAX_SOURCE_BYTES})", file=sys.stderr)
+        sys.exit(1)
+    try:
+        words = compile_v1(src)
+    except CompileError as e:
+        print(f"compile error: {e}", file=sys.stderr)
+        sys.exit(1)
+    print(' '.join(str(w) for w in words))
+
+
+if __name__ == '__main__':
+    main()

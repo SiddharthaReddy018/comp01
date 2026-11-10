@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.pyo
+artifacts/test-results/*
+!artifacts/test-results/.gitkeep
+artifacts/benchmarks/*
+!artifacts/benchmarks/.gitkeep
+*.log
+.DS_Store

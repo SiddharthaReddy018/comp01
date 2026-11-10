@@ -562,7 +562,9 @@ class Compiler:
             if name in fi['lenv']: dest = fi['lenv'][name]
             elif name in self._globals: dest = self._globals[name]['tag']
             else: raise CompileError(f"Undefined variable: {name!r}")
-            self._compile_expr(node['val'], dest, fname)
+            vt = self._alloc_temp(fname)
+            self._compile_expr(node['val'], vt, fname)
+            self.a.copy(vt, dest)
         elif k == 'arr_assign':
             g = self._globals.get(node['name'])
             if g is None or g['kind'] != 'array':

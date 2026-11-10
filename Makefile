@@ -154,10 +154,33 @@ test-m3: | $(ARTIFACTS)
 accept-m3: test-m3
 	@echo "M3 ACCEPTED"
 
-# ── M4A-E, M4S: Tier 2 compiler ──────────────────────────────────────────────
-.PHONY: test-m4a test-m4b test-m4s test-m4c test-m4d test-m4e
-.PHONY: test-m5 test-m6 test-m7 test-m8 test-m9
+# ── M4: Tier 2 compiler ──────────────────────────────────────────────────────
+.PHONY: test-m4 accept-m4 test-m5 accept-m5
+test-m4: | $(ARTIFACTS)
+	@echo "=== M4: Tier 2 compiler, reference suite ==="
+	@test -x tools/vm || gcc -O2 -o tools/vm tools/vm.c
+	@fail=0; for f in tests/reference/*.v1; do \
+		name=$$(basename $$f .v1); exp="tests/reference/$$name.expected"; \
+		got=$$(python3 tier2/compile.py < "$$f" | tools/vm /dev/stdin 2>&1); want=$$(cat "$$exp"); \
+		if [ "$$got" = "$$want" ]; then echo "  PASS: $$name"; \
+		else echo "  FAIL: $$name (got: '$$got', want: '$$want')"; fail=1; fi; \
+	done; test $$fail -eq 0
+	@echo "PASS: M4 complete."
 
-test-m4a test-m4b test-m4s test-m4c test-m4d test-m4e test-m5 test-m6 test-m7 test-m8 test-m9:
+accept-m4: test-m4
+	@echo "M4 ACCEPTED"
+
+# ── M5: differential hardening ───────────────────────────────────────────────
+test-m5: test-m4
+	@echo "=== M5: differential fuzz (tier2+vm vs v1i), 100 programs ==="
+	python3 tools/run_gen_test.py 100
+	python3 tools/run_diff_test.py 100
+	@echo "PASS: M5 complete."
+
+accept-m5: test-m5
+	@echo "M5 ACCEPTED"
+
+.PHONY: test-m6 test-m7 test-m8 test-m9
+test-m6 test-m7 test-m8 test-m9:
 	@echo "Milestone $@ not yet implemented."
 	@exit 1

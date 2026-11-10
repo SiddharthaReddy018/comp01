@@ -525,26 +525,23 @@ class Compiler:
         cells_to_save = []
         if is_self:
             cfi = self._funcs[caller]
-            cells_to_save = (list(cfi['param_tags']) + list(cfi['local_tags'])
-                             + list(cfi['temp_tags']))
+            cells_to_save = ([cfi['neg_ret_cell']] + list(cfi['param_tags'])
+                             + list(cfi['local_tags']) + list(cfi['temp_tags']))
             self._emit_push_frame(callee, cells_to_save)
 
         # Copy temps → callee params
         for pt, at in zip(fi['param_tags'], arg_temps):
             self.a.copy(at, pt)
 
-        # Patch callee's return-jump c-field (self-modifying, done at runtime)
-        nrc      = self.a.alloc(self._new_label('nrt'), 0)
+        # Set callee NRC = -ret_addr (ret_cell holds +ret_addr, filled post-link)
+        ret_cell = self.a.alloc(self._new_label('rc'), 0)
         ret_lbl  = self._new_label('ret')
-        cpa      = len(self.a._code)
-        self.a.instruction(0, 0, self.a.here_plus(3))
-        cpb      = len(self.a._code)
-        self.a.instruction(0, nrc, self.a.here_plus(3))
-
+        nrc      = fi['neg_ret_cell']
+        self.a.instruction(nrc, nrc, self.a.here_plus(3))
+        self.a.instruction(nrc, ret_cell, self.a.here_plus(3))
         self.a.jump(fi['entry_label'])
         self.a.label(ret_lbl)
-
-        self._call_sites.append({'callee':callee,'nrc':nrc,'ret_lbl':ret_lbl,'cpa':cpa,'cpb':cpb})
+        self._call_sites.append({'callee':callee,'ret_cell':ret_cell,'ret_lbl':ret_lbl})
 
         # For self-recursion: pop frame after return
         if is_self:
@@ -623,8 +620,12 @@ class Compiler:
 
         # Fall-through return 0
         self.a.copy(self._const(0), 'RET')
-        # Return-jump instruction: c-field (0) is patched per call site at runtime.
+        # Epilogue: patch RETJMP c-field from NRC (data-driven return address).
         self.a.label(fi['ret_jmp_lbl'])
+        fi['ret_patch_p1'] = len(self.a._code)
+        self.a.instruction(0, 0, self.a.here_plus(3))                    # clear c-field
+        fi['ret_patch_p2'] = len(self.a._code)
+        self.a.instruction(0, fi['neg_ret_cell'], self.a.here_plus(3))   # c-field = -NRC = ret_addr
         fi['ret_jmp_offset'] = len(self.a._code)
         self.a.instruction(FIXED['NEG1'], FIXED['ZERO'], 0)
 
@@ -719,6 +720,8 @@ class Compiler:
                 'params': fa['params'], 'param_tags': pts,
                 'entry_label': f'FUNC_{fn}', 'ret_jmp_lbl': f'RETJMP_{fn}',
                 'ret_jmp_offset': None,
+                'neg_ret_cell': self.a.alloc(f'NRC_{fn}', 0),
+                'ret_patch_p1': None, 'ret_patch_p2': None,
                 'is_recursive': is_rec,
                 'stack_data_tag': stk_data,  # the alloc_array tag
                 'stack_base_tag': stk_base,  # scalar cell holding stk_data address
@@ -732,16 +735,15 @@ class Compiler:
         main_fi = self._funcs['main']
 
         # Bootstrap: patch main's ret-jump c-field → halt, then jump to main
-        nhc = self.a.alloc(self._new_label('nhlt'), 0)   # -halt_addr (post-link)
-        bpa = len(self.a._code)
-        self.a.instruction(0, 0, self.a.here_plus(3))
-        bpb = len(self.a._code)
-        self.a.instruction(0, nhc, self.a.here_plus(3))
+        brc = self.a.alloc(self._new_label('brc'), 0)   # +halt_addr (post-link)
+        mn = main_fi['neg_ret_cell']
+        self.a.instruction(mn, mn, self.a.here_plus(3))
+        self.a.instruction(mn, brc, self.a.here_plus(3))
         self.a.jump(main_fi['entry_label'])
         halt_lbl = self._new_label('halt')
         self.a.label(halt_lbl)
         self.a.instruction(FIXED['NEG1'], FIXED['ZERO'], -1)   # pc=-1 → VM halts
-        self._bootstrap = {'nhc':nhc,'halt_lbl':halt_lbl,'bpa':bpa,'bpb':bpb}
+        self._bootstrap = {'brc':brc,'halt_lbl':halt_lbl}
 
         # Compile all functions
         for fa in fl: self._compile_func(fa)
@@ -782,25 +784,23 @@ class Compiler:
                 Arb = 11 + rlrd + 1
                 words[11+prb+0] = Arb; words[11+prb+1] = Arb; words[11+prb+3] = Arb
 
-        # Post-link: call sites
-        for site in self._call_sites:
-            cfi = self._funcs[site['callee']]
-            if cfi['ret_jmp_offset'] is None:
-                raise CompileError(f"Function {site['callee']!r} never compiled")
-            cfa = 11 + cfi['ret_jmp_offset'] + 2   # c-field of return-jump instruction
-            words[11+site['cpa']+0] = cfa
-            words[11+site['cpa']+1] = cfa
-            words[11+site['cpb']+0] = cfa
-            ret_addr = 11 + self.a._labels[site['ret_lbl']]
-            words[da(site['nrc'])] = -ret_addr
+        # Post-link: epilogue patch sequences
+        for fn in sorted(self._funcs):
+            finfo = self._funcs[fn]
+            if finfo['ret_jmp_offset'] is None:
+                raise CompileError(f"Function {fn!r} never compiled")
+            cfa = 11 + finfo['ret_jmp_offset'] + 2
+            p1 = finfo['ret_patch_p1']; p2 = finfo['ret_patch_p2']
+            words[11+p1+0] = cfa; words[11+p1+1] = cfa
+            words[11+p2+0] = cfa
 
-        # Post-link: bootstrap
+        # Post-link: call sites (positive return addresses)
+        for site in self._call_sites:
+            words[da(site['ret_cell'])] = 11 + self.a._labels[site['ret_lbl']]
+
+        # Post-link: bootstrap halt address
         bs = self._bootstrap
-        mca = 11 + main_fi['ret_jmp_offset'] + 2
-        words[11+bs['bpa']+0] = mca; words[11+bs['bpa']+1] = mca
-        words[11+bs['bpb']+0] = mca
-        halt_addr = 11 + self.a._labels[bs['halt_lbl']]
-        words[da(bs['nhc'])] = -halt_addr
+        words[da(bs['brc'])] = 11 + self.a._labels[bs['halt_lbl']]
 
         return words
 

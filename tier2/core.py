@@ -269,6 +269,8 @@ class Compiler:
     def _alloc_temp(self, fname):
         fi = self._funcs[fname]
         idx = fi['next_temp']; fi['next_temp'] += 1
+        if idx < len(fi['temp_tags']):
+            return fi['temp_tags'][idx]
         tag = self.a.alloc(f'T_{fname}_{idx}', 0)
         fi['temp_tags'].append(tag)
         return tag
@@ -552,6 +554,11 @@ class Compiler:
     # ── Statement compiler ────────────────────────────────────────────────────
 
     def _compile_stmt(self, node, fname):
+        mark = self._funcs[fname]['next_temp']
+        self._compile_stmt_inner(node, fname)
+        self._funcs[fname]['next_temp'] = mark   # temps are dead at statement end
+
+    def _compile_stmt_inner(self, node, fname):
         k = node['kind']
         if k == 'var_decl':
             tag = self.a.alloc(f'L_{fname}_{node["name"]}', 0)
@@ -712,8 +719,7 @@ class Compiler:
             pts = [self.a.alloc(f'P_{fn}_{p}', 0) for p in fa['params']]
             # For recursive functions: allocate stack storage and sp cell.
             if is_rec:
-                stk_data = self.a.alloc_array(f'STK_{fn}',
-                                              MAX_RECURSION_DEPTH * MAX_FRAME_SIZE)
+                stk_data = None   # allocated after the body is compiled (exact frame size)
                 stk_base = self.a.alloc(f'STK_BASE_{fn}', 0)  # filled post-link
                 sp       = self.a.alloc(f'SP_{fn}', 0)
             else:
@@ -749,6 +755,14 @@ class Compiler:
 
         # Compile all functions
         for fa in fl: self._compile_func(fa)
+
+        # Recursive-function stacks, sized to the exact frame (NRC + params + locals + temps)
+        for fn in sorted(self._funcs):
+            fi = self._funcs[fn]
+            if fi['is_recursive']:
+                frame = 1 + len(fi['param_tags']) + len(fi['local_tags']) + len(fi['temp_tags'])
+                fi['stack_data_tag'] = self.a.alloc_array(
+                    f'STK_{fn}', (MAX_RECURSION_DEPTH + 1) * frame)
 
         # Link
         words = self.a.link()

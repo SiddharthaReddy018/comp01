@@ -769,13 +769,13 @@ class Compiler:
         code_len  = len(self.a._code)
         data_base = 11 + code_len
 
+        _offs = {}; _o = 0
+        for _n in self.a._data_names:
+            _offs[_n] = _o; _o += self.a._data_sizes[_n]
+
         def da(tag):
             name = tag[1] if isinstance(tag, tuple) else tag
-            off = 0
-            for n in self.a._data_names:
-                if n == name: return data_base + off
-                off += self.a._data_sizes[n]
-            raise KeyError(name)
+            return data_base + _offs[name]
 
         # Post-link: array base addresses
         for g in self._globals.values():

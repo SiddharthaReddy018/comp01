@@ -1,0 +1,498 @@
+// tier3.v1 - one-pass v1 -> SUBLEQ compiler, written in v1.
+// stdin: v1 source.  stdout: SUBLEQ image (decimal words).
+// Operand encoding in code[]: kind*4194304 + value + 2
+//   kind 0 absolute, 1 scalar region (S), 2 frame region (F).
+// Fixed operands (addr+2): NEG1=5 ZERO=6 ONE=7 RET=8 S1=10 S2=11 IN=1048576 OUT=1048577
+var ch; var tok; var tv;
+var nc; var ns; var nF; var arrtot; var nrl;
+var npool; var nname; var nfunc; var curf; var retch; var ntemp; var ntc;
+var nl; var ad; var pnm; var mainfi; var mid; var bootj;
+var cMA; var cMB; var cMR; var cMS; var cCS; var cCD; var cCN; var cPS; var cPD;
+var cTV; var cSP; var cNP; var cNV;
+var nrcm; var entm; var nrcc; var entc; var spent; var S0; var F0; var A0;
+array pool[30000];
+array code[380000];
+array di[110000];
+array rcell[1100]; array rkind[1100]; array rval[1100];
+array nms[4100]; array nml[4100]; array hn[4100]; array hb[1024]; array kt[4100];
+array gk[4100]; array gc[4100]; array lc[4100]; array lst[2048];
+array fe[256]; array fnp[256]; array fnrc[256]; array ffb[256]; array fpa[256];
+array fpar[2048]; array tcell[4096]; array at[4096]; array pw[10];
+
+func em(w) { code[nc] = w; nc = nc + 1; return 0; }
+func ins(a, b, c) { em(a); em(b); em(c); return 0; }
+func hr() { return nc + 13; }
+func clr(x) { ins(x, x, nc + 16); return 0; }
+func sub(x, y) { ins(x, y, nc + 16); return 0; }
+func cpy(s, d) { clr(10); sub(10, s); clr(d); sub(d, 10); return 0; }
+func cpy2(s, d) { clr(11); sub(11, s); clr(d); sub(d, 11); return 0; }
+func add(s, d) { clr(10); sub(10, s); sub(d, 10); return 0; }
+func neg(x) { clr(10); sub(10, x); clr(11); sub(11, 10); clr(x); sub(x, 11); return 0; }
+func jmp(t) { ins(5, 6, t); return 0; }
+func jfw() { ins(5, 6, 2); return nc - 1; }
+func bnf(x) { ins(x, 6, 2); return nc - 1; }
+func setl(j) { code[j] = nc + 13; return 0; }
+func pch(x) { clr(10); sub(10, x); ins(1048577, 10, nc + 16); return 0; }
+func gch(d) {
+  clr(d); sub(d, 1048576);
+  clr(10); sub(10, d); clr(11); sub(11, 10); clr(d); sub(d, 11);
+  return 0;
+}
+func setb(x, v) { clr(x); if (v == 1) { sub(x, 5); } return 0; }
+func newS(v) { di[ns] = v; ns = ns + 1; return 4194304 + ns + 1; }
+func newF() { nF = nF + 1; return 8388608 + nF + 1; }
+func reg(kind, v) { rcell[nrl] = ns - 1; rkind[nrl] = kind; rval[nrl] = v; nrl = nrl + 1; return nrl - 1; }
+func callr(nrc, ent) {
+  var rc;
+  rc = newS(nc + 20);
+  clr(nrc); sub(nrc, rc); jmp(ent);
+  return 0;
+}
+func epi(nrc) {
+  var f;
+  f = nc + 21;
+  ins(f, f, nc + 16); ins(f, nrc, nc + 16); ins(5, 6, 2);
+  return 0;
+}
+func pat(f, np) { ins(f, f, nc + 16); ins(f, np, nc + 16); return 0; }
+func ild(np, d) {
+  var f;
+  f = nc + 23;
+  pat(f, np);
+  clr(10);
+  ins(10, 2, nc + 16);
+  clr(d); sub(d, 10);
+  return 0;
+}
+func ist(np, v) {
+  var b0;
+  b0 = nc;
+  clr(cNV); sub(cNV, v);
+  pat(b0 + 37, np); pat(b0 + 38, np); pat(b0 + 40, np);
+  ins(2, 2, nc + 16);
+  ins(2, cNV, nc + 16);
+  return 0;
+}
+func jz(t) {
+  var s;
+  s = nc + 28;
+  ins(t, 6, s);
+  clr(10); sub(10, t);
+  ins(10, 6, s);
+  return jfw();
+}
+func tmp() {
+  var c;
+  if (ntemp == ntc) { tcell[ntc] = newF(); ntc = ntc + 1; }
+  c = tcell[ntemp]; ntemp = ntemp + 1;
+  return c;
+}
+func mkmul() {
+  var l; var j1; var j2; var j3;
+  entm = hr();
+  clr(cMR); cpy(7, cMS);
+  j1 = bnf(cMA); j2 = jfw(); setl(j1); neg(cMA); neg(cMS); setl(j2);
+  j1 = bnf(cMB); j2 = jfw(); setl(j1); neg(cMB); neg(cMS); setl(j2);
+  l = hr();
+  j1 = bnf(cMB);
+  clr(10); sub(10, cMB);
+  j2 = bnf(10);
+  j3 = jfw();
+  setl(j2);
+  add(cMA, cMR); sub(cMB, 7); jmp(l);
+  setl(j1); setl(j3);
+  j1 = bnf(cMS); j2 = jfw(); setl(j1); neg(cMR); setl(j2);
+  epi(nrcm);
+  return 0;
+}
+func mkcopy() {
+  var l; var j1; var j2; var j3;
+  entc = hr();
+  l = hr();
+  j1 = bnf(cCN);
+  clr(10); sub(10, cCN);
+  j2 = bnf(10);
+  j3 = jfw();
+  setl(j2);
+  clr(cPS); sub(cPS, cCS); clr(cPD); sub(cPD, cCD);
+  ild(cPS, cTV); ist(cPD, cTV);
+  sub(cCS, 5); sub(cCD, 5); sub(cCN, 7); jmp(l);
+  setl(j1); setl(j3);
+  epi(nrcc);
+  return 0;
+}
+func cmpop(op, x, y) {
+  var a; var b; var inv; var rt; var rf;
+  var j1; var j2; var j3; var j4; var jt; var je;
+  inv = 0; a = x; b = y;
+  if (op == 62) { a = y; b = x; }
+  if (op == 200) { a = y; b = x; inv = 1; }
+  if (op == 201) { inv = 1; }
+  if (op == 203) { inv = 1; }
+  rt = 1 - inv; rf = inv;
+  if (op >= 202) {
+    cpy2(x, 10); sub(10, y);
+    j1 = bnf(10);
+    clr(11); sub(11, 10);
+    j2 = bnf(11);
+    setb(x, rt);
+    je = jfw();
+    setl(j1); setl(j2);
+    setb(x, rf);
+    setl(je);
+    return 0;
+  }
+  j1 = bnf(a);
+  j2 = bnf(b);
+  j3 = jfw();
+  setl(j1);
+  j4 = bnf(b);
+  jt = jfw();
+  setl(j3); setl(j4);
+  cpy2(a, 10); sub(10, b);
+  j3 = bnf(10);
+  setl(j2);
+  setb(x, rf);
+  je = jfw();
+  setl(jt); setl(j3);
+  setb(x, rt);
+  setl(je);
+  return 0;
+}
+func eop(op, d, r) {
+  if (op == 43) { add(r, d); return 0; }
+  if (op == 45) { sub(d, r); return 0; }
+  if (op == 42) {
+    cpy(d, cMA); cpy(r, cMB); callr(nrcm, entm); cpy(cMR, d);
+    return 0;
+  }
+  cmpop(op, d, r);
+  return 0;
+}
+func lv(t) {
+  if (t >= 200) { return 0; }
+  if (t == 60) { return 0; }
+  if (t == 62) { return 0; }
+  if (t == 43) { return 1; }
+  if (t == 45) { return 1; }
+  if (t == 42) { return 2; }
+  return -1;
+}
+func isid(c) {
+  if (c >= 97) { if (c <= 122) { return 1; } }
+  if (c >= 65) { if (c <= 90) { return 1; } }
+  if (c >= 48) { if (c <= 57) { return 1; } }
+  if (c == 95) { return 1; }
+  return 0;
+}
+func hs(h, c) {
+  h = h * 3 + c;
+  while (h >= 1024) { h = h - 1024; }
+  return h;
+}
+func intern(ps, l, h) {
+  var id; var i; var q; var ok;
+  id = hb[h];
+  while (id != 0) {
+    ok = 0;
+    if (nml[id] == l) {
+      ok = 1; i = 0; q = nms[id];
+      while (i < l) {
+        if (pool[q + i] != pool[ps + i]) { ok = 0; }
+        i = i + 1;
+      }
+    }
+    if (ok == 1) { npool = ps; return id; }
+    id = hn[id];
+  }
+  nname = nname + 1; id = nname;
+  nms[id] = ps; nml[id] = l; hn[id] = hb[h]; hb[h] = id;
+  return id;
+}
+func kw(l, a, b, c, d, e, f, code_) {
+  var ps; var h; var i; var id;
+  ps = npool;
+  pool[ps] = a; pool[ps + 1] = b; pool[ps + 2] = c;
+  pool[ps + 3] = d; pool[ps + 4] = e; pool[ps + 5] = f;
+  npool = ps + l;
+  h = 0; i = 0;
+  while (i < l) { h = hs(h, pool[ps + i]); i = i + 1; }
+  id = intern(ps, l, h);
+  kt[id] = code_;
+  return id;
+}
+func nt() {
+  var h; var l; var ps; var id; var sk; var cm; var c2;
+  sk = 1;
+  while (sk == 1) {
+    sk = 0;
+    if (ch == 32) { sk = 1; }
+    if (ch == 10) { sk = 1; }
+    if (ch == 9) { sk = 1; }
+    if (ch == 13) { sk = 1; }
+    if (sk == 1) { ch = getc(); }
+    if (ch == 47) {
+      sk = 1; cm = 1;
+      while (cm == 1) {
+        ch = getc();
+        if (ch == 10) { cm = 0; }
+        if (ch < 0) { cm = 0; }
+      }
+    }
+  }
+  if (ch < 0) { tok = 0; return 0; }
+  if ((ch >= 48) * (ch <= 57)) {
+    tv = 0;
+    while ((ch >= 48) * (ch <= 57)) { tv = tv * 10 + (ch - 48); ch = getc(); }
+    tok = 1;
+    return 0;
+  }
+  if (isid(ch) == 1) {
+    ps = npool; l = 0; h = 0;
+    while (isid(ch) == 1) {
+      pool[npool] = ch; npool = npool + 1;
+      h = hs(h, ch); l = l + 1; ch = getc();
+    }
+    id = intern(ps, l, h);
+    tok = 2; tv = id;
+    if (kt[id] != 0) { tok = kt[id]; }
+    return 0;
+  }
+  c2 = ch; ch = getc();
+  tok = c2;
+  if (c2 == 60) { if (ch == 61) { tok = 200; ch = getc(); } }
+  if (c2 == 62) { if (ch == 61) { tok = 201; ch = getc(); } }
+  if (c2 == 61) { if (ch == 61) { tok = 202; ch = getc(); } }
+  if (c2 == 33) { if (ch == 61) { tok = 203; ch = getc(); } }
+  return 0;
+}
+func vc(id) {
+  if (lc[id] != 0) { return lc[id]; }
+  return gc[id];
+}
+// expression: lvl 0 cmp, 1 add, 2 mul, 3 unary/primary. Result into cell dest.
+func pe(lvl, dest) {
+  var id; var fi; var base; var k; var t; var op; var rec; var n;
+  var cn; var pa; var c;
+  if (lvl < 3) {
+    pe(lvl + 1, dest);
+    while (lv(tok) == lvl) {
+      op = tok; nt(); t = tmp(); pe(lvl + 1, t); eop(op, dest, t);
+    }
+    return 0;
+  }
+  id = 0;
+  if (pnm != 0) { id = pnm; pnm = 0; }
+  if (id == 0) {
+    if (tok == 45) { nt(); pe(3, dest); neg(dest); return 0; }
+    if (tok == 1) { c = newS(0 - tv); clr(dest); sub(dest, c); nt(); return 0; }
+    if (tok == 40) { nt(); pe(0, dest); nt(); return 0; }
+    if (tok == 10) { nt(); nt(); nt(); gch(dest); return 0; }
+    if (tok == 11) { nt(); nt(); t = tmp(); pe(0, t); nt(); pch(t); clr(dest); return 0; }
+    id = tv; nt();
+  }
+  if (tok == 91) {
+    nt(); t = tmp(); pe(0, t); nt();
+    clr(cNP); sub(cNP, gc[id]); sub(cNP, t);
+    ild(cNP, dest);
+    return 0;
+  }
+  if (tok == 40) {
+    fi = gc[id]; base = ad * 8; ad = ad + 1;
+    nt(); k = 0;
+    while (tok != 41) {
+      t = tmp(); pe(0, t); at[base + k] = t; k = k + 1;
+      if (tok == 44) { nt(); }
+    }
+    nt();
+    rec = 0;
+    if (fi == curf) { rec = 1; }
+    if (rec == 1) {
+      if (fpa[fi] == 0) { fpa[fi] = newS(0); reg(2, ffb[fi]); }
+      pa = fpa[fi];
+      cn = newS(nF - ffb[fi]);
+      cpy(pa, cCS); cpy(cSP, cCD); cpy(cn, cCN); add(cn, cSP);
+      callr(nrcc, entc);
+    }
+    n = 0;
+    while (n < k) { cpy(at[base + n], fpar[fi * 8 + n]); n = n + 1; }
+    callr(fnrc[fi], fe[fi]);
+    if (rec == 1) {
+      sub(cSP, cn); cpy(cSP, cCS); cpy(pa, cCD); cpy(cn, cCN);
+      callr(nrcc, entc);
+    }
+    cpy(8, dest);
+    ad = ad - 1;
+    return 0;
+  }
+  cpy(vc(id), dest);
+  return 0;
+}
+// block: '{' stmts '}'
+func pb() {
+  var k; var k2; var t; var j; var j2; var l; var id; var mark; var c; var it; var vt;
+  nt();
+  while (tok != 125) {
+    mark = ntemp;
+    k = tok;
+    if (k == 3) {
+      nt(); id = tv; c = newF(); lc[id] = c; lst[nl] = id; nl = nl + 1;
+      nt(); nt();
+    }
+    if (k == 6) {
+      nt(); nt(); t = tmp(); pe(0, t); nt();
+      j = jz(t);
+      pb();
+      if (tok == 7) {
+        nt(); j2 = jfw(); setl(j); pb(); setl(j2);
+      } else {
+        setl(j);
+      }
+    }
+    if (k == 8) {
+      nt(); nt(); l = hr(); t = tmp(); pe(0, t); nt();
+      j = jz(t);
+      pb();
+      jmp(l); setl(j);
+    }
+    if (k == 9) {
+      nt(); t = tmp(); pe(0, t); nt();
+      cpy(t, 8);
+      j = jfw(); code[j] = retch; retch = j;
+    }
+    if (k == 11) {
+      nt(); nt(); t = tmp(); pe(0, t); nt(); nt();
+      pch(t);
+    }
+    if (k == 10) {
+      nt(); nt(); nt(); nt();
+      t = tmp(); gch(t);
+    }
+    if (k == 2) {
+      id = tv; nt(); k2 = tok;
+      if (k2 == 61) {
+        nt(); t = tmp(); pe(0, t); nt();
+        cpy(t, vc(id));
+      }
+      if (k2 == 91) {
+        nt(); it = tmp(); pe(0, it); nt(); nt();
+        vt = tmp(); pe(0, vt); nt();
+        clr(cNP); sub(cNP, gc[id]); sub(cNP, it);
+        ist(cNP, vt);
+      }
+      if (k2 == 40) {
+        pnm = id; t = tmp(); pe(3, t); nt();
+      }
+    }
+    ntemp = mark;
+  }
+  nt();
+  return 0;
+}
+func pf() {
+  var id; var fi; var np; var pid; var c; var i; var j; var nx_;
+  nt(); id = tv; nt(); nt();
+  fi = nfunc; nfunc = nfunc + 1;
+  gk[id] = 3; gc[id] = fi;
+  if (id == mid) { mainfi = fi; }
+  fe[fi] = hr();
+  ffb[fi] = nF; fnrc[fi] = newF();
+  curf = fi; ntemp = 0; ntc = 0; retch = -1; nl = 0;
+  np = 0;
+  while (tok != 41) {
+    pid = tv; nt(); c = newF();
+    lc[pid] = c; lst[nl] = pid; nl = nl + 1;
+    fpar[fi * 8 + np] = c; np = np + 1;
+    if (tok == 44) { nt(); }
+  }
+  fnp[fi] = np;
+  nt();
+  pb();
+  clr(8);
+  j = retch;
+  while (j >= 0) { nx_ = code[j]; code[j] = nc + 13; j = nx_; }
+  epi(fnrc[fi]);
+  i = 0;
+  while (i < nl) { lc[lst[i]] = 0; i = i + 1; }
+  curf = -1;
+  return 0;
+}
+func pn(x) {
+  var i; var d; var p; var f;
+  if (x < 0) { putc(45); x = 0 - x; }
+  f = 0; i = 9;
+  while (i >= 0) {
+    p = pw[i]; d = 0;
+    while (x >= p) { x = x - p; d = d + 1; }
+    if (d > 0) { f = 1; }
+    if (f == 1) { putc(48 + d); }
+    i = i - 1;
+  }
+  if (f == 0) { putc(48); }
+  return 0;
+}
+func po(x) { pn(x); putc(32); return 0; }
+func dec(w) {
+  var k; var x;
+  x = w; k = 0;
+  while (x >= 4194304) { x = x - 4194304; k = k + 1; }
+  x = x - 2;
+  if (k == 1) { x = x + S0; }
+  if (k == 2) { x = x + F0; }
+  return x;
+}
+func main() {
+  var i; var c; var id; var sz; var rc;
+  pw[0] = 1; i = 1;
+  while (i < 10) { pw[i] = pw[i - 1] * 10; i = i + 1; }
+  nc = 0; ns = 0; nF = 0; arrtot = 0; nrl = 0; npool = 0; nname = 0;
+  nfunc = 0; curf = -1; ad = 0; pnm = 0; mainfi = -1;
+  cMA = newS(0); cMB = newS(0); cMR = newS(0); cMS = newS(0);
+  cCS = newS(0); cCD = newS(0); cCN = newS(0); cPS = newS(0); cPD = newS(0);
+  cTV = newS(0); cNP = newS(0); cNV = newS(0); nrcm = newS(0); nrcc = newS(0);
+  cSP = newS(0); spent = reg(3, 0);
+  kw(3, 118, 97, 114, 0, 0, 0, 3);
+  kw(5, 97, 114, 114, 97, 121, 0, 4);
+  kw(4, 102, 117, 110, 99, 0, 0, 5);
+  kw(2, 105, 102, 0, 0, 0, 0, 6);
+  kw(4, 101, 108, 115, 101, 0, 0, 7);
+  kw(5, 119, 104, 105, 108, 101, 0, 8);
+  kw(6, 114, 101, 116, 117, 114, 110, 9);
+  kw(4, 103, 101, 116, 99, 0, 0, 10);
+  kw(4, 112, 117, 116, 99, 0, 0, 11);
+  mid = kw(4, 109, 97, 105, 110, 0, 0, 0);
+  bootj = jfw();
+  mkmul(); mkcopy();
+  ch = getc(); nt();
+  while (tok != 0) {
+    c = tok;
+    if (c == 3) {
+      nt(); gk[tv] = 1; gc[tv] = newS(0); nt(); nt();
+    }
+    if (c == 4) {
+      nt(); id = tv; nt(); nt(); sz = tv; nt(); nt(); nt();
+      gk[id] = 2; gc[id] = newS(0); reg(3, arrtot); arrtot = arrtot + sz;
+    }
+    if (c == 5) { pf(); }
+  }
+  setl(bootj);
+  rc = newS(nc + 20);
+  clr(fnrc[mainfi]); sub(fnrc[mainfi], rc); jmp(fe[mainfi]);
+  ins(5, 6, 1);
+  S0 = 11 + nc; F0 = S0 + ns; A0 = F0 + nF;
+  rval[spent] = arrtot;
+  i = 0;
+  while (i < nrl) {
+    c = rcell[i];
+    if (rkind[i] == 2) { di[c] = rval[i] + F0; }
+    if (rkind[i] == 3) { di[c] = rval[i] + A0; }
+    i = i + 1;
+  }
+  po(3); po(4); po(11); po(-1); po(0); po(1); po(0); po(0); po(0); po(0); po(0);
+  i = 0;
+  while (i < nc) { po(dec(code[i])); i = i + 1; }
+  i = 0;
+  while (i < ns) { po(di[i]); i = i + 1; }
+  putc(10);
+  return 0;
+}

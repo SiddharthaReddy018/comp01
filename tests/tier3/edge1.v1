@@ -1,0 +1,24 @@
+var g; array a[10]; array b[5];
+array pw[10];
+func pr(x) { var d; var p; var f; var i;
+  if (x < 0) { putc(45); x = 0 - x; }
+  f = 0; i = 9;
+  while (i >= 0) { p = pw[i]; d = 0; while (x >= p) { x = x - p; d = d + 1; }
+    if (d > 0) { f = 1; } if (f == 1) { putc(48 + d); } i = i - 1; }
+  if (f == 0) { putc(48); } putc(10); return 0; }
+func sq(x) { return x * x; }
+func fib(n) { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }
+func ack(m, n) { if (m == 0) { return n + 1; } if (n == 0) { return ack(m - 1, 1); } return ack(m - 1, ack(m, n - 1)); }
+func sum(n, acc) { var t; t = n; if (n == 0) { return acc; } return sum(n - 1, acc + t); }
+func main() {
+  var x; var y; var q;
+  pw[0] = 1; q = 1; while (q < 10) { pw[q] = pw[q - 1] * 10; q = q + 1; }
+  x = 2147483647; y = x + 1; pr(y); pr(y - 1); pr(0 - x);
+  pr(x * 2); pr(46341 * 46341); pr((0 - 7) * 6); pr((0 - 7) * (0 - 6)); pr(0 * 5); pr(123456 * 0 - 1);
+  pr(x > y); pr(y < x); pr(y <= y); pr(y >= x); pr((0 - 5) < 3); pr(3 < (0 - 5)); pr(x == x); pr(x != y);
+  pr(1 < 2 < 3); pr(5 - 3 - 1); pr(-(-4)); pr(2 + 3 * 4 - 1); pr(-2 * -3);
+  pr(fib(15)); pr(ack(2, 3)); pr(sum(900, 0)); pr(sq(sq(7)));
+  a[3] = 77; a[a[3] - 74] = a[3] + 1; pr(a[3]); pr(a[4 - 1 + 0] + a[3]); b[0] = 1; b[4] = b[0] + a[3]; pr(b[4]);
+  g = getc(); pr(g); g = getc(); pr(g); g = getc(); pr(g); g = getc(); pr(g);
+  putc(65 + (getc() < 0)); putc(10);
+}

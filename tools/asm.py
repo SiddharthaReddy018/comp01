@@ -121,12 +121,16 @@ class Assembler:
         code_len = len(self._code)
         data_base = NUM_FIXED + code_len
 
+        offs = {}; _o = 0
+        for _n in self._data_names:
+            offs[_n] = _o; _o += self._data_sizes[_n]
+
         def resolve(f):
             if isinstance(f, int):
                 return f
             kind, name = f
             if kind == 'data':
-                return data_base + self._data_offset(name)
+                return data_base + offs[name]
             if kind == 'label':
                 if name not in self._labels:
                     raise ValueError(f"Unresolved label: {name!r}")

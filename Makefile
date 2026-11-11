@@ -191,7 +191,40 @@ test-m6: test-m5
 accept-m6: test-m6
 	@echo "M6 ACCEPTED"
 
-.PHONY: test-m7 test-m8 test-m9
-test-m7 test-m8 test-m9:
+# ── M7: Tier 3 compiler (tier3/tier3.v1, written in v1) ─────────────────────
+.PHONY: test-m7 accept-m7 test-m8 accept-m8
+C1 = $(ARTIFACTS)/C1.txt
+C2 = $(ARTIFACTS)/C2.txt
+C3 = $(ARTIFACTS)/C3.txt
+VMBIG = VM_LIMIT=10000000000
+
+$(C1): tier3/tier3.v1 tier2/core.py tier2/compile.py | $(ARTIFACTS)
+	python3 tier2/compile.py < tier3/tier3.v1 > $@
+
+test-m7: test-m6 $(C1)
+	@echo "=== M7: tier3.v1 (v1 compiler in v1), compiled by Tier 2 = C1 ==="
+	@gcc -O2 -o tools/vm tools/vm.c
+	python3 tools/check_tier3.py
+	python3 tools/v1i.py tier3/tier3.v1 < tests/reference/fact3.v1 > /dev/null
+	$(VMBIG) python3 tools/run_diff_tier3.py $(C1) 100
+	@echo "PASS: M7 complete."
+
+accept-m7: test-m7
+	@echo "M7 ACCEPTED"
+
+# ── M8: self-hosting triple bootstrap ────────────────────────────────────────
+test-m8: test-m7
+	@echo "=== M8: C1 = Tier2(tier3.v1); C2 = C1(tier3.v1); C3 = C2(tier3.v1) ==="
+	$(VMBIG) tools/vm $(C1) < tier3/tier3.v1 > $(C2)
+	$(VMBIG) tools/vm $(C2) < tier3/tier3.v1 > $(C3)
+	@cmp $(C2) $(C3) && echo "  FIXPOINT: C2 == C3 (bitwise identical, $$(wc -w < $(C2)) words)"
+	$(VMBIG) python3 tools/run_diff_tier3.py $(C2) 150 1000
+	@echo "PASS: M8 complete."
+
+accept-m8: test-m8
+	@echo "M8 ACCEPTED"
+
+.PHONY: test-m9
+test-m9:
 	@echo "Milestone $@ not yet implemented."
 	@exit 1

@@ -1,0 +1,11 @@
+// 8-parameter function (spec max) and 8-param call with side-effecting args
+var c;
+func tick() { c = c + 1; return c; }
+func f(a, b, d, e, g, h, i, j) { return a + 2 * b + 3 * d + 4 * e + 5 * g + 6 * h + 7 * i + 8 * j; }
+func main() {
+    if (f(1, 2, 3, 4, 5, 6, 7, 8) == 204) { putc(89); } else { putc(78); }
+    c = 0;
+    // args evaluated left to right: 1,2,...,8 -> same weighted sum 204
+    if (f(tick(), tick(), tick(), tick(), tick(), tick(), tick(), tick()) == 204) { putc(89); } else { putc(78); }
+    putc(10);
+}

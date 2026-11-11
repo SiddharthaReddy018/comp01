@@ -1,0 +1,10 @@
+// getc at EOF is -1 (repeatably); putc emits low 8 bits only
+func main() {
+    if (getc() == -1) { putc(89); } else { putc(78); }
+    if (getc() == -1) { putc(89); } else { putc(78); }
+    putc(321);        // 256 + 65 -> 'A'
+    putc(3137);       // 3072 + 65 -> 'A'
+    putc(-191);       // -256 + 65 -> 'A'
+    putc(2147483647 - 2147483647 + 66 + 1024 * 1024 * 1024);  // 'B'
+    putc(10);
+}

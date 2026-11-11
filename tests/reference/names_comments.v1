@@ -1,0 +1,14 @@
+// 24-char identifiers, comments everywhere, max literal
+var abcdefghijklmnopqrstuvwx;            // 24 chars
+array ABCDEFGHIJKLMNOPQRSTUVWX[3];        // 24 chars
+func fffffffffffffffffffffff_(ppppppppppppppppppppppp_) { // 24 / 24
+    var vvvvvvvvvvvvvvvvvvvvvvv_;  // 24
+    vvvvvvvvvvvvvvvvvvvvvvv_ = ppppppppppppppppppppppp_;
+    return vvvvvvvvvvvvvvvvvvvvvvv_;
+}
+func main() {
+    abcdefghijklmnopqrstuvwx = 2147483647; // literal max
+    ABCDEFGHIJKLMNOPQRSTUVWX[2] = abcdefghijklmnopqrstuvwx;
+    if (fffffffffffffffffffffff_(ABCDEFGHIJKLMNOPQRSTUVWX[2]) == 2147483647) { putc(89); } // ok
+    putc(10); // done
+}

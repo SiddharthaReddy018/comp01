@@ -1,0 +1,11 @@
+// Large global array (1,000,000 words): first/middle/last element and a neighbouring global stay intact
+var g;
+array big[1000000];
+func main() {
+    var i;
+    g = 5;
+    big[0] = 11; big[999999] = 22; big[500000] = 33;
+    i = 999999;
+    if (big[0] == 11) { if (big[i] == 22) { if (big[500000] == 33) { if (g == 5) { putc(89); } } } }
+    putc(10);
+}

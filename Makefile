@@ -256,3 +256,8 @@ demo: $(C1)
 	@cmp $(C2) $(C3) && echo "fixpoint: C2 == C3 ($$(wc -w < $(C2)) words)"
 	@echo "--- Tier 3: compile fact3.v1 with C2 and run it"
 	@tools/vm $(C2) < tests/reference/fact3.v1 | tools/vm /dev/stdin
+
+# Replay artifacts on the official VM binaries (needs docker or Linux; set COMP01_KIT)
+.PHONY: official
+official:
+	tools/official_check.sh

@@ -94,7 +94,7 @@ returns chain through the same words and are resolved at the end of each functio
 C1 = Tier2(tier3.v1)     python3 tier2/compile.py < tier3/tier3.v1
 C2 = C1(tier3.v1)        tools/vm C1 < tier3.v1
 C3 = C2(tier3.v1)        tools/vm C2 < tier3.v1
-C2 == C3                 bitwise (40,662 words)
+C2 == C3                 bitwise (42,533 words)
 ```
 `C1 != C2` is expected: Tier 2 and Tier 3 lay memory out differently. The fixpoint proves
 that C2 is a stable compiler, and the differential suite (below) proves it is a *correct*
@@ -111,6 +111,7 @@ one, so the fixpoint is not an artefact of a consistently-wrong compiler.
 | Tier 3 (C1) vs `v1i` | `make test-m7` (reference + edge + generated) |
 | Fixpoint + C2 vs `v1i` | `make test-m8` |
 | Everything + demo | `make test` |
+| Official VM binaries (42 cases, C2==C3) | `COMP01_KIT=<dir> make official` |
 
 Bugs the fuzzer found that hand-written tests did not: assignment aliasing
 (`x = expr(x)` clobbering `x` mid-expression) and, earlier, recursion corrupting return
@@ -118,7 +119,7 @@ addresses.
 
 ## 7. Known limits
 
-* Multiplication is a 31-step binary routine (about 300 steps per product, exact for the full 32-bit wrap including -2^31); it needs no division.
+* Both tiers call one shared MUL routine (inlining it per `*` overflowed memory in Tier 2). Multiplication is a 31-step binary routine (about 300 steps per product, exact for the full 32-bit wrap including -2^31); it needs no division.
 * `tier3.v1` assumes valid input (no diagnostics) and define-before-use for functions.
 * Capacity: 380k code words, 110k scalar cells, 30k identifier characters, 4k distinct
   names per compile; a dense 55 KB program compiles in ~650M steps.

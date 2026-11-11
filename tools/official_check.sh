@@ -47,6 +47,9 @@ IN
 chmod +x "$D/inner.sh"
 if [ "${OFFICIAL_LOCAL:-0}" = 1 ]; then
   "$D/inner.sh" "$PWD/tools/vm" "$PWD/tools/vm" "$D"
+elif [ "$(uname -s)" = Linux ]; then
+  : "${COMP01_KIT:?set COMP01_KIT to the kit directory}"
+  "$D/inner.sh" "$COMP01_KIT/VM_tier1and2" "$COMP01_KIT/VM_tier3" "$PWD/$D"
 else
   : "${COMP01_KIT:?set COMP01_KIT to the kit directory}"
   docker run --rm --platform linux/amd64 -v "$COMP01_KIT":/kit:ro -v "$PWD":/w -w /w ubuntu:24.04 \

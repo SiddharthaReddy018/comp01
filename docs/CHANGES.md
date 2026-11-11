@@ -14,6 +14,7 @@ Design changes made while building, and a map of what to touch if a rule changes
 | 5 | Added `tools/run_diff_test.py` | `run_gen_test.py` only validates the generator, it never ran the compiler | `tools/` |
 | 6 | Tier 3 written directly in v1 (no transpiler) | One-pass design is far smaller than a port of `core.py` | `tier3/tier3.v1` |
 | 8 | Binary multiply (31 unrolled steps) replaces repeated addition | `x * 1103515245` exceeded 2e10 steps; limit is 1e8 | `tier2/core.py`, `tier3/tier3.v1` |
+| 9 | Tier 2 multiply is a shared routine (`MUL_ENTRY`, `MUL_NRC`) instead of inline per `*` | A mul-heavy 20 KB program emitted 12.6M words (> memory) | `tier2/core.py` |
 | 7 | `tools/vm` untracked, rebuilt by `make test-m4` | A Linux binary was committed by mistake and broke macOS | `.gitignore`, `Makefile` |
 
 ## If a rule changes
@@ -26,3 +27,5 @@ Design changes made while building, and a map of what to touch if a rule changes
 | Larger recursion depth | Stack is a zero region, so no code change; check total memory fits |
 | New operator | Add a token in `nt()`, a level in `lv()`, and emission in `eop()` (Tier 3); the same three places exist in `tier2/core.py` |
 | Output format (e.g. one word per line) | `po()` in `tier3.v1`, `main()` in `tier2/core.py` |
+
+`make official` replays every artifact on the official VM binaries (42 cases, all OK).

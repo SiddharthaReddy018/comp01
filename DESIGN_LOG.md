@@ -47,7 +47,7 @@ was 136k words (1000 x 128 stack): fixed in M7 prep by exact frame sizing and te
 - Hit: a 55 KB dense program overflowed the 200k-word code buffer; raised to 380k.
 
 ## M8 - Bootstrap
-C2 == C3 bitwise (40,662 words). Self-compile 170M steps (target 3e9). C2 re-validated by
+C2 == C3 bitwise (42,533 words). Self-compile 170M steps (target 3e9). C2 re-validated by
 the differential suite so the fixpoint is not trivially true.
 
 ## M9 - Docs and demo
@@ -62,3 +62,26 @@ the differential suite so the fixpoint is not trivially true.
   `(-2^31) * odd`. New reference test `tests/reference/mulbig.v1` (256 products vs `v1i`).
 - `tier2/BUILD.md` was still a stub; written.
 
+
+## Hardening pass (official-VM verification)
+- Ran both official Linux ELF VMs directly. `make official`: **42/42 OK, fail=0** (4 Tier 1 programs,
+  17 reference programs through Tier 2, 19 through C1 (reference + tier3 edge tests), boot2/boot3 on VM_tier3; was 26 before
+  the new edge tests). C2 == C3 (42,533 words). `probe.txt` prints `A` on both VMs.
+- Tier 1 byte-exact on the official VM: hanoi n=1..8 equals a reference generator (one move per
+  line, trailing newline), max 405,526 steps; bigmul 157 cases incl. 0*0, 0*x, 40x40 digits,
+  max 1.76M steps; echo/reverse on empty input and 1000 bytes.
+- **Failed / found:** Tier 2 inlined the 31-step multiply (~1,400 words per `*`). A 20 KB
+  program with many `*` produced 12.6M words, far over the 1,048,576-word memory.
+  **Fix:** one shared `MUL` routine, entered through its own `MUL_NRC` cell with the same
+  data-driven return as functions (`tier2/core.py`, `_emit_multiply` / `_emit_mul_routine`).
+  Same 20 KB program: 524k words. Reference, differential and fixpoint suites unchanged.
+- Earlier recursion bug (kept here on purpose): patching the callee's RETJMP at each call site
+  made inner recursive calls overwrite the outer return address (`fact3`, `recursion_max`).
+  Fixed by the per-function `NRC_<fn>` cell, which recursive frames save and restore like data.
+- New reference tests: params8, io_edges (getc EOF, putc low 8 bits), cmp_literals (2e9 compares,
+  wraparound, 2147483647), control (else { if }, while truthiness, local hides global),
+  names_comments (24-char names), syntax_misc, deep_rec (depth 999), bigarray (1M-word array).
+- `tools/gen_stress.py`: ~59 KB / 75-function program: C1 emits 131k words and the output matches
+  the oracle; a 19 KB program through Tier 2 compiles in 0.2 s.
+- **Known limit:** Tier 3 arrays are safe up to about 1,046,885 words (Tier 2: 1,047,133); the spec
+  gives no maximum. Not changed, because editing `tier3.v1` changes C2/C3.

@@ -17,7 +17,7 @@ array rcell[1100]; array rkind[1100]; array rval[1100];
 array nms[4100]; array nml[4100]; array hn[4100]; array hb[1024]; array kt[4100];
 array gk[4100]; array gc[4100]; array lc[4100]; array lst[2048];
 array fe[256]; array fnp[256]; array fnrc[256]; array ffb[256]; array fpa[256];
-array fpar[2048]; array tcell[4096]; array at[4096]; array pw[10];
+array tp[32]; array fpar[2048]; array tcell[4096]; array at[4096]; array pw[10];
 
 func em(w) { code[nc] = w; nc = nc + 1; return 0; }
 func ins(a, b, c) { em(a); em(b); em(c); return 0; }
@@ -88,19 +88,22 @@ func tmp() {
   return c;
 }
 func mkmul() {
-  var l; var j1; var j2; var j3;
+  var i; var c; var j1; var j2;
   entm = hr();
   clr(cMR); cpy(7, cMS);
   j1 = bnf(cMA); j2 = jfw(); setl(j1); neg(cMA); neg(cMS); setl(j2);
   j1 = bnf(cMB); j2 = jfw(); setl(j1); neg(cMB); neg(cMS); setl(j2);
-  l = hr();
-  j1 = bnf(cMB);
-  clr(10); sub(10, cMB);
-  j2 = bnf(10);
-  j3 = jfw();
-  setl(j2);
-  add(cMA, cMR); sub(cMB, 7); jmp(l);
-  setl(j1); setl(j3);
+  j1 = bnf(cMB); j2 = jfw(); setl(j1); cpy(cMA, cMR); clr(cMB); setl(j2);
+  tp[0] = 1; i = 1;
+  while (i < 31) { tp[i] = tp[i - 1] + tp[i - 1]; i = i + 1; }
+  i = 30;
+  while (i >= 0) {
+    c = newS(tp[i]);
+    add(cMR, cMR); sub(cMB, c);
+    j1 = bnf(cMB); add(cMA, cMR); j2 = jfw();
+    setl(j1); add(c, cMB); setl(j2);
+    i = i - 1;
+  }
   j1 = bnf(cMS); j2 = jfw(); setl(j1); neg(cMR); setl(j2);
   epi(nrcm);
   return 0;

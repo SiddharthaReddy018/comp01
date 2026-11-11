@@ -53,7 +53,12 @@ the differential suite so the fixpoint is not trivially true.
 ## M9 - Docs and demo
 `docs/EXPLAIN.md`, `docs/CHANGES.md`, `make demo`, `make test`.
 
-## Open item
-The brief text says branch on `r <= 0`; `vm.c` and `ABI.md` say `r < 0`. All codegen assumes
-strict `<`. Verify on the official VM (probe in `docs/CHANGES.md`).
+## Post-M9 review against PROBLEM.pdf
+- Branch condition: PROBLEM.pdf and the official `VM_tier1and2` (probe run in Docker) both use
+  strict `r < 0`, so all codegen is right. (A pasted brief said `<=`; it was wrong.)
+- **Multiply was too slow.** Repeated addition made `x * 1103515245` cost more than 2e10 steps
+  (limit 1e8), which would fail any PRNG/hash test. Replaced in Tier 2 and Tier 3 by a 31-step
+  binary multiply (~300 steps, 7.8k steps for the 20-iteration LCG). It also fixes
+  `(-2^31) * odd`. New reference test `tests/reference/mulbig.v1` (256 products vs `v1i`).
+- `tier2/BUILD.md` was still a stub; written.
 

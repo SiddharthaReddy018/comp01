@@ -80,7 +80,7 @@ Only code and scalar data are printed; the rest is zero memory the VM already pr
 
 **Frames are contiguous per function**, so a recursive call saves/restores them with one
 shared `COPY` routine (a self-modifying loop) instead of per-cell code. `MUL` (sign
-normalisation + repeated addition) is a shared routine as well; both are emitted once
+normalisation + 31 unrolled shift-and-add steps over constant cells 2^30..1) is a shared routine as well; both are emitted once
 at the start of the image and called through the same `NRC` mechanism as user functions.
 
 **Names** are interned through a 1024-bucket hash into ids; keywords are pre-interned, so
@@ -118,8 +118,7 @@ addresses.
 
 ## 7. Known limits
 
-* Multiplication is repeated addition (`O(|b|)` per product); `(-2^31) * odd` returns 0
-  instead of `-2^31` (same behaviour in Tier 2 and Tier 3).
+* Multiplication is a 31-step binary routine (about 300 steps per product, exact for the full 32-bit wrap including -2^31); it needs no division.
 * `tier3.v1` assumes valid input (no diagnostics) and define-before-use for functions.
 * Capacity: 380k code words, 110k scalar cells, 30k identifier characters, 4k distinct
   names per compile; a dense 55 KB program compiles in ~650M steps.

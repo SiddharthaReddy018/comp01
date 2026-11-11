@@ -13,13 +13,14 @@ Design changes made while building, and a map of what to touch if a rule changes
 | 4 | O(1) data-offset lookups in assembler/linker | Quadratic link time on a 14 KB program | `tools/asm.py`, `tier2/core.py` |
 | 5 | Added `tools/run_diff_test.py` | `run_gen_test.py` only validates the generator, it never ran the compiler | `tools/` |
 | 6 | Tier 3 written directly in v1 (no transpiler) | One-pass design is far smaller than a port of `core.py` | `tier3/tier3.v1` |
+| 8 | Binary multiply (31 unrolled steps) replaces repeated addition | `x * 1103515245` exceeded 2e10 steps; limit is 1e8 | `tier2/core.py`, `tier3/tier3.v1` |
 | 7 | `tools/vm` untracked, rebuilt by `make test-m4` | A Linux binary was committed by mistake and broke macOS | `.gitignore`, `Makefile` |
 
 ## If a rule changes
 
 | Rule | What to change |
 |------|----------------|
-| Branch is `<= 0` instead of `< 0` | `bneg`/`jz`/compare macros in `tools/asm.py` and `tier2/core.py`, and the matching helpers (`bnf`, `jz`, `cmpop`, `mkmul`) in `tier3.v1`. Probe: `12 12 -1 1048575 13 6 15 16 -1 0 0 0 0 -65 0 -1 0` prints `A` under `<` and nothing under `<=`. |
+| Branch is `<= 0` instead of `< 0` | `bneg`/`jz`/compare macros in `tools/asm.py` and `tier2/core.py`, and the matching helpers (`bnf`, `jz`, `cmpop`, `mkmul`) in `tier3.v1`. Probe `12 12 -1 1048575 13 6 15 16 -1 0 0 0 0 -65 0 -1 0` prints `A` under `<` (verified: the official VM and PROBLEM.pdf use strict `<`). |
 | Memory size or I/O ports change | `tools/spec_limits.py`; port operands (`1048576`/`1048577`) in `tier3.v1` `gch`/`pch` |
 | Source or function limits grow | Array caps at the top of `tier3.v1` (`code`, `di`, `pool`, `nms`, ...) |
 | Larger recursion depth | Stack is a zero region, so no code change; check total memory fits |

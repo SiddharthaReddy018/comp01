@@ -362,7 +362,7 @@ class Compiler:
         self.a.label(fal); self.a.copy(zero, result_cell)
         self.a.label(end)
 
-    # ── Signed multiply (O(|b|) loop — documented limitation) ─────────────────
+    # ── Signed multiply (binary, ~300 steps) ─────────────────
 
     def _emit_multiply(self, a_cell, b_cell, result_cell):
         zero = self._const(0); one = self._const(1); c2 = self._const(2)
@@ -397,15 +397,24 @@ class Compiler:
         self.a.copy(zero, sg)                                # sg==2 → set 0
         self.a.label(Lsk)
 
-        # Loop: mr += ma, mb times
-        Lloop = self._new_label('ml'); Lexit = self._new_label('me')
-        self.a.label(Lloop)
-        self.a.branch_if_neg(mb, Lexit)
-        self._branch_if_zero(mb, Lexit)
-        self.a.add(ma, mr)
-        self.a.sub(one, mb)
-        self.a.jump(Lloop)
-        self.a.label(Lexit)
+        # Binary multiply of |ma| by |mb| (mod 2^32), 31 unrolled steps:
+        #   mr = 0; if mb<0 (only -2^31) {mr = ma; mb = 0}
+        #   for i in 30..0: mr += mr; mb -= 2^i; if mb<0 {mb += 2^i} else {mr += ma}
+        self.a.copy(zero, mr)
+        Ltop = self._new_label('mtop'); Lnt = self._new_label('mnt')
+        self.a.branch_if_neg(mb, Ltop); self.a.jump(Lnt)
+        self.a.label(Ltop); self.a.copy(ma, mr); self.a.copy(zero, mb)
+        self.a.label(Lnt)
+        for i in range(30, -1, -1):
+            pc = self._const(1 << i)
+            Lu = self._new_label('mu'); Ln = self._new_label('mx')
+            self.a.add(mr, mr)
+            self.a.sub(pc, mb)
+            self.a.branch_if_neg(mb, Lu)
+            self.a.add(ma, mr)
+            self.a.jump(Ln)
+            self.a.label(Lu); self.a.add(pc, mb)
+            self.a.label(Ln)
 
         # Apply sign
         Lok = self._new_label('sok')

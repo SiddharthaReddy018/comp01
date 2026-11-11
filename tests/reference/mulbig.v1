@@ -1,0 +1,19 @@
+// multiplication: signs, wraparound, +-2^31, large operands (binary multiply)
+array pw[10]; array v[16];
+func pr(x) { var d; var p; var f; var i;
+  if (x < 0) { putc(45); x = 0 - x; }
+  f = 0; i = 9;
+  while (i >= 0) { p = pw[i]; d = 0; while (x >= p) { x = x - p; d = d + 1; }
+    if (d > 0) { f = 1; } if (f == 1) { putc(48 + d); } i = i - 1; }
+  if (f == 0) { putc(48); } putc(10); return 0; }
+func main() { var i; var j; var s;
+  pw[0] = 1; i = 1; while (i < 10) { pw[i] = pw[i - 1] * 10; i = i + 1; }
+  v[0] = 0; v[1] = 1; v[2] = -1; v[3] = 2; v[4] = -2; v[5] = 46341; v[6] = -46341;
+  v[7] = 2147483647; v[8] = -2147483647; v[9] = -2147483647 - 1; v[10] = 1103515245;
+  v[11] = 12345; v[12] = 65536; v[13] = -65536; v[14] = 1000000007; v[15] = 3;
+  s = 0; i = 0;
+  while (i < 16) { j = 0;
+    while (j < 16) { s = s + v[i] * v[j] * 7; pr(v[i] * v[j]); j = j + 1; }
+    i = i + 1; }
+  pr(s);
+}

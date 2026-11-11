@@ -248,6 +248,7 @@ class Compiler:
         self._label_ctr  = 0    # deterministic counter
         self._arr_patches  = [] # post-link array patch records
         self._call_sites   = [] # post-link call site records
+        self._mul_used = False; self._mul = None; self._mul_ret = None
         self._bootstrap    = None
 
     # ── Labels ───────────────────────────────────────────────────────────────
@@ -365,13 +366,27 @@ class Compiler:
     # ── Signed multiply (binary, ~300 steps) ─────────────────
 
     def _emit_multiply(self, a_cell, b_cell, result_cell):
-        zero = self._const(0); one = self._const(1); c2 = self._const(2)
-        ma = self.a.alloc(self._new_label('ma'), 0)
-        mb = self.a.alloc(self._new_label('mb'), 0)
-        mr = self.a.alloc(self._new_label('mr'), 0)
-        sg = self.a.alloc(self._new_label('ms'), 0)
+        """Call the shared MUL routine (emitted once; ~1400 words inline per '*' overflowed memory)."""
+        if not self._mul_used:
+            self._mul_used = True
+            self._mul = {n: self.a.alloc(n, 0) for n in ('MUL_A', 'MUL_B', 'MUL_R', 'MUL_S', 'MUL_NRC')}
+        m = self._mul
+        self.a.copy(a_cell, m['MUL_A']); self.a.copy(b_cell, m['MUL_B'])
+        ret_cell = self.a.alloc(self._new_label('rc'), 0)
+        ret_lbl = self._new_label('ret')
+        nrc = m['MUL_NRC']
+        self.a.instruction(nrc, nrc, self.a.here_plus(3))
+        self.a.instruction(nrc, ret_cell, self.a.here_plus(3))
+        self.a.jump('MUL_ENTRY')
+        self.a.label(ret_lbl)
+        self._call_sites.append({'callee': None, 'ret_cell': ret_cell, 'ret_lbl': ret_lbl})
+        self.a.copy(m['MUL_R'], result_cell)
 
-        self.a.copy(a_cell, ma); self.a.copy(b_cell, mb)
+    def _emit_mul_routine(self):
+        zero = self._const(0); one = self._const(1); c2 = self._const(2)
+        ma = self._mul['MUL_A']; mb = self._mul['MUL_B']
+        mr = self._mul['MUL_R']; sg = self._mul['MUL_S']
+        self.a.label('MUL_ENTRY')
         self.a.copy(zero, mr);   self.a.copy(zero, sg)
 
         # Handle sign of ma
@@ -422,7 +437,14 @@ class Compiler:
         self.a.negate_inplace(mr)
         self.a.label(Lok)
 
-        self.a.copy(mr, result_cell)
+        # Return through MUL_NRC (same data-driven mechanism as functions)
+        self.a.label('RETJMP_MUL')
+        self._mul_ret = {'p1': len(self.a._code)}
+        self.a.instruction(0, 0, self.a.here_plus(3))
+        self._mul_ret['p2'] = len(self.a._code)
+        self.a.instruction(0, self._mul['MUL_NRC'], self.a.here_plus(3))
+        self._mul_ret['off'] = len(self.a._code)
+        self.a.instruction(FIXED['NEG1'], FIXED['ZERO'], 0)
 
     # ── Array write: arr[idx] = val ───────────────────────────────────────────
 
@@ -700,6 +722,7 @@ class Compiler:
         self.a = Assembler(); self._globals = {}; self._funcs = {}
         self._const_pool = {}; self._label_ctr = 0
         self._arr_patches = []; self._call_sites = []; self._bootstrap = None
+        self._mul_used = False; self._mul = None; self._mul_ret = None
 
         gl, ad, fl = Parser(src).parse_program()
 
@@ -764,6 +787,7 @@ class Compiler:
 
         # Compile all functions
         for fa in fl: self._compile_func(fa)
+        if self._mul_used: self._emit_mul_routine()
 
         # Recursive-function stacks, sized to the exact frame (NRC + params + locals + temps)
         for fn in sorted(self._funcs):
@@ -816,6 +840,12 @@ class Compiler:
                 raise CompileError(f"Function {fn!r} never compiled")
             cfa = 11 + finfo['ret_jmp_offset'] + 2
             p1 = finfo['ret_patch_p1']; p2 = finfo['ret_patch_p2']
+            words[11+p1+0] = cfa; words[11+p1+1] = cfa
+            words[11+p2+0] = cfa
+
+        if self._mul_used:
+            cfa = 11 + self._mul_ret['off'] + 2
+            p1 = self._mul_ret['p1']; p2 = self._mul_ret['p2']
             words[11+p1+0] = cfa; words[11+p1+1] = cfa
             words[11+p2+0] = cfa
 

@@ -224,7 +224,35 @@ test-m8: test-m7
 accept-m8: test-m8
 	@echo "M8 ACCEPTED"
 
-.PHONY: test-m9
-test-m9:
-	@echo "Milestone $@ not yet implemented."
-	@exit 1
+# ── M9: docs + demo ──────────────────────────────────────────────────────────
+.PHONY: test-m9 accept-m9 demo test
+test-m9: test-m8
+	@echo "=== M9: documentation and demo ==="
+	@for f in docs/EXPLAIN.md docs/CHANGES.md DESIGN_LOG.md; do \
+		test -s $$f || { echo "FAIL: $$f missing"; exit 1; }; \
+		! grep -q "TBD after M9" $$f || { echo "FAIL: $$f still TBD"; exit 1; }; done
+	@$(MAKE) --no-print-directory demo SKIP_OFFICIAL=1 > $(ARTIFACTS)/demo.log
+	@echo "PASS: M9 complete."
+
+accept-m9: test-m9
+	@echo "M9 ACCEPTED"
+
+test: test-m9
+
+demo: $(C1)
+	@gcc -O2 -o tools/vm tools/vm.c
+	@echo "--- Tier 1: echo / reverse"
+	@printf 'hello\n' | tools/vm tier1/echo.txt
+	@printf 'abc\n' | tools/vm tier1/reverse.txt; echo
+	@echo "--- Tier 1: bigmul (20-digit x 20-digit)"
+	@printf '12345678901234567890\n98765432109876543210\n' | tools/vm tier1/bigmul.txt
+	@echo "--- Tier 1: hanoi n=3"
+	@echo 3 | tools/vm tier1/hanoi.txt | tr '\n' ' '; echo
+	@echo "--- Tier 2: compile + run tests/reference/fact3.v1"
+	@python3 tier2/compile.py < tests/reference/fact3.v1 | tools/vm /dev/stdin
+	@echo "--- Tier 3: C1 = Tier2(tier3.v1); C2 = C1(tier3.v1); C3 = C2(tier3.v1)"
+	@$(VMBIG) tools/vm $(C1) < tier3/tier3.v1 > $(C2)
+	@$(VMBIG) tools/vm $(C2) < tier3/tier3.v1 > $(C3)
+	@cmp $(C2) $(C3) && echo "fixpoint: C2 == C3 ($$(wc -w < $(C2)) words)"
+	@echo "--- Tier 3: compile fact3.v1 with C2 and run it"
+	@tools/vm $(C2) < tests/reference/fact3.v1 | tools/vm /dev/stdin

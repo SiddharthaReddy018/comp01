@@ -1,0 +1,25 @@
+// recursion depth 1000 with several params/locals, array writes in recursion
+func pn(v) {
+    var q;
+    var r;
+    if (v < 0) { putc(45); v = -v; }
+    q = 0;
+    r = v;
+    while (r >= 10) { r = r - 10; q = q + 1; }
+    if (q > 0) { pn(q); }
+    putc(48 + r);
+    return 0;
+}
+array t[1100];
+func d(n, a, b) {
+    var l;
+    l = n * 2;
+    if (n == 0) { return 0; }
+    t[n] = l + a;
+    return d(n - 1, a + 1, b) + 1 + l - l + (b - b);
+}
+func main() {
+    pn(d(999, 3, 4)); putc(32);
+    pn(t[1] + t[999]);
+    putc(10);
+}

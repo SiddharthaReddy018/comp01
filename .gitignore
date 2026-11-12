@@ -8,3 +8,7 @@ artifacts/benchmarks/*
 *.log
 .DS_Store
 tools/vm
+docs/
+*.patch
+COMP01_*.md
+COMP01_HANDOFF*

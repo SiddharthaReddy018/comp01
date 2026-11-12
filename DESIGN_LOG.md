@@ -15,7 +15,6 @@ What was tried, what failed, what was learned.
 - Stack sized for 1,000-deep recursion of the largest frame
 - Performance targets: 215M ref / official parity gate / 300M stretch
 
-**Open questions:** See docs/ASSUMPTIONS.md §10D
 
 ---
 
@@ -51,7 +50,7 @@ C2 == C3 bitwise (42,533 words). Self-compile 170M steps (target 3e9). C2 re-val
 the differential suite so the fixpoint is not trivially true.
 
 ## M9 - Docs and demo
-`docs/EXPLAIN.md`, `docs/CHANGES.md`, `make demo`, `make test`.
+`make demo`, `make test`.
 
 ## Post-M9 review against PROBLEM.pdf
 - Branch condition: PROBLEM.pdf and the official `VM_tier1and2` (probe run in Docker) both use

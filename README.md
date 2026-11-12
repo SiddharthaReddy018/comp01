@@ -14,7 +14,6 @@ make demo        # live demo
 
 | Directory | Contents |
 |-----------|----------|
-| `docs/`   | ABI, memory map, codegen, assumptions |
 | `tools/`  | VM, assembler, interpreter, fuzzer, transpiler |
 | `tier1/`  | Hand-assembled programs (echo, reverse, bigmul, hanoi) |
 | `tier2/`  | v1 compiler (Python) |

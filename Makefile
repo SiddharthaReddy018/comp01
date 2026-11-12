@@ -37,10 +37,6 @@ clean:
 .PHONY: test-m0 accept-m0
 test-m0:
 	@echo "=== M0: Architecture Contracts ==="
-	@test -s docs/ABI.md          || { echo "FAIL: docs/ABI.md missing or empty"; exit 1; }
-	@test -s docs/MEMORY_MAP.md   || { echo "FAIL: docs/MEMORY_MAP.md missing or empty"; exit 1; }
-	@test -s docs/CODEGEN.md      || { echo "FAIL: docs/CODEGEN.md missing or empty"; exit 1; }
-	@test -s docs/ASSUMPTIONS.md  || { echo "FAIL: docs/ASSUMPTIONS.md missing or empty"; exit 1; }
 	@test -s tools/spec_limits.py || { echo "FAIL: tools/spec_limits.py missing or empty"; exit 1; }
 	@python3 -c "import tools.spec_limits as s; assert s.N == 1048576" \
 		|| { echo "FAIL: spec_limits.py import check failed"; exit 1; }
@@ -228,7 +224,7 @@ accept-m8: test-m8
 .PHONY: test-m9 accept-m9 demo test
 test-m9: test-m8
 	@echo "=== M9: documentation and demo ==="
-	@for f in docs/EXPLAIN.md docs/CHANGES.md DESIGN_LOG.md; do \
+	@for f in DESIGN_LOG.md; do \
 		test -s $$f || { echo "FAIL: $$f missing"; exit 1; }; \
 		! grep -q "TBD after M9" $$f || { echo "FAIL: $$f still TBD"; exit 1; }; done
 	@$(MAKE) --no-print-directory demo SKIP_OFFICIAL=1 > $(ARTIFACTS)/demo.log

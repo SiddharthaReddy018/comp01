@@ -84,4 +84,6 @@ make test && make official
 - Each self-call site inlines a push and pop of every live cell, which makes recursion fast but
   makes code larger. A single 20 KB function with about 24 live locals and 800 recursive call sites
   would not fit in memory. Ordinary programs are far below that.
-- `%`, `/`, `&&`, `||`, `for` and `++` are not part of v1 and are rejected.
+- The v1 language does not support modulo (`%`), division (`/`), logical AND (`&&`), logical OR (`||`), `for` loops, or increment operators (`++`). These constructs are unsupported by the compiler.
+- The `/` character is supported only as part of the `//` single-line comment syntax.
+- The compiler supports only the operators and control-flow constructs defined in the COMP01 specification.

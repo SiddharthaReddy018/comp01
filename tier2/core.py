@@ -950,6 +950,9 @@ class Compiler:
                 if k == 'while' and stmts(s['body'], n): return True
                 e = s.get('val') or s.get('expr')
                 if e and expr(e, n): return True
+                c = s.get('cond')
+                if c and expr(c, n): return True            # recursion only inside an if/while condition
+                if k == 'call_stmt' and any(expr(x, n) for x in s['args']): return True
                 if k == 'arr_assign' and expr(s['idx'], n): return True
             return False
         def expr(nd, n):

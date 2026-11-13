@@ -1,0 +1,20 @@
+func g(n) {
+    if (n == 0) { return 0; }
+    putc(65 + g(n - 1));
+    return n;
+}
+func w(n) {
+    var k;
+    k = 0;
+    if (n == 0) { return 0; }
+    while (k < w(n - 1)) { k = k + 1; }
+    return k + 1;
+}
+func f(n) {
+    var r;
+    r = 0;
+    if (n == 0) { return 0; }
+    if (f(n - 1) == 0) { r = n; }
+    return r + 10;
+}
+func main() { g(2); putc(10); putc(48 + w(3)); putc(10); putc(48 + f(3) - 10); putc(10); }

@@ -487,11 +487,29 @@ class Compiler:
         #   mr = 0; if mb<0 (only -2^31) {mr = ma; mb = 0}
         #   for i in 30..0: mr += mr; mb -= 2^i; if mb<0 {mb += 2^i} else {mr += ma}
         self.a.copy(zero, mr)
-        Ltop = self._new_label('mtop'); Lnt = self._new_label('mnt')
-        self.a.branch_if_neg(mb, Ltop); self.a.jump(Lnt)
+        # Entry points: skipping iterations i > i0 is exact when mb < 2^(i0+1)
+        # (mr is 0 and those bits are 0). mb < 0 (only -2^31) always enters at 30.
+        ENT = [3, 7, 11, 15, 19, 23, 27, 30]
+        elab = {e: self._new_label('men') for e in ENT}
+        Ltop = self._new_label('mtop'); Ldisp = self._new_label('mdsp')
+        self.a.branch_if_neg(mb, Ltop); self.a.jump(Ldisp)
         self.a.label(Ltop); self.a.copy(ma, mr); self.a.copy(zero, mb)
-        self.a.label(Lnt)
+        self.a.jump(elab[30])
+        self.a.label(Ldisp)
+        def tree(lo, hi):
+            if lo == hi:
+                self.a.jump(elab[ENT[lo]]); return
+            mid = (lo + hi) // 2
+            thr = self._const(1 << (ENT[mid] + 1))
+            Ll = self._new_label('mtl')
+            self.a.copy(mb, 'SCR1', scratch='SCR2'); self.a.sub(thr, 'SCR1')
+            self.a.branch_if_neg('SCR1', Ll)
+            tree(mid + 1, hi)
+            self.a.label(Ll)
+            tree(lo, mid)
+        tree(0, len(ENT) - 1)
         for i in range(30, -1, -1):
+            if i in elab: self.a.label(elab[i])
             pc = self._const(1 << i)
             Lu = self._new_label('mu'); Ln = self._new_label('mx')
             self.a.add(mr, mr)
@@ -714,9 +732,17 @@ class Compiler:
         is_self = (callee == caller)
 
         # Evaluate args into caller temps
+        # An arg goes straight into the callee's param cell when no call occurs in it
+        # or in any later arg (a call could overwrite that cell first); never for self-calls.
+        jmax = -1
+        for i, an in enumerate(arg_nodes):
+            if Compiler._mentions(an, '', True): jmax = i
         arg_temps = []
-        for an in arg_nodes:
-            t = self._alloc_temp(caller); self._compile_expr(an, t, caller); arg_temps.append(t)
+        for i, an in enumerate(arg_nodes):
+            if not is_self and i > jmax:
+                self._compile_expr(an, fi['param_tags'][i], caller); arg_temps.append(None)
+            else:
+                t = self._alloc_temp(caller); self._compile_expr(an, t, caller); arg_temps.append(t)
 
         # For self-recursion: snapshot all live cells and push onto stack
         cells_to_save = []
@@ -728,7 +754,7 @@ class Compiler:
 
         # Copy temps → callee params
         for pt, at in zip(fi['param_tags'], arg_temps):
-            self.a.copy(at, pt)
+            if at is not None: self.a.copy(at, pt)
 
         # Set callee NRC = -ret_addr (ret_cell holds +ret_addr, filled post-link)
         ret_cell = self.a.alloc(self._new_label('rc'), 0)

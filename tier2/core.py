@@ -606,8 +606,11 @@ class Compiler:
             if ec is not None:                       # literal in-range index: direct cell
                 if ec != dest: self.a.copy(ec, dest)
             else:
-                it = self._alloc_temp(fname)
-                self._compile_expr(node['idx'], it, fname)
+                if self._is_leaf(node['idx']):               # leaf index read in place
+                    it = self._leaf_cell(node['idx'], fname)
+                else:
+                    it = self._alloc_temp(fname)
+                    self._compile_expr(node['idx'], it, fname)
                 self._emit_arr_read(g['base_tag'], it, dest)
         elif k == 'getc':
             self.a.getc(dest)
@@ -651,6 +654,16 @@ class Compiler:
         g = self._globals[name]
         if 0 <= idx['val'] < g['size']: return ('data+', (g['arr_data_tag'][1], idx['val']))
         return None
+
+    @staticmethod
+    def _pure(n):
+        # no call, getc or putc inside: operand order cannot matter
+        k = n['kind']
+        if k in ('int', 'var'): return True
+        if k == 'binop': return Compiler._pure(n['left']) and Compiler._pure(n['right'])
+        if k == 'arr_read': return Compiler._pure(n['idx'])
+        if k == 'unary': return Compiler._pure(n['expr'])
+        return False
 
     @staticmethod
     def _touches(n, name):
@@ -791,11 +804,16 @@ class Compiler:
             elif name in self._globals: dest = self._globals[name]['tag']
             else: raise CompileError(f"Undefined variable: {name!r}")
             is_glob = name not in fi['lenv']
-            if self._direct_ok(node['val'], name, is_glob):
-                self._compile_expr(node['val'], dest, fname)   # no temp
+            val = node['val']
+            if (val['kind'] == 'binop' and val['op'] == '+' and val['right']['kind'] == 'var'
+                    and val['right']['name'] == name and Compiler._pure(val['left'])
+                    and not Compiler._mentions(val['left'], name, False)):
+                val = {'kind': 'binop', 'op': '+', 'left': val['right'], 'right': val['left']}
+            if self._direct_ok(val, name, is_glob):
+                self._compile_expr(val, dest, fname)   # no temp
             else:
                 vt = self._alloc_temp(fname)
-                self._compile_expr(node['val'], vt, fname)
+                self._compile_expr(val, vt, fname)
                 self.a.copy(vt, dest)
         elif k == 'arr_assign':
             g = self._globals.get(node['name'])
@@ -810,9 +828,18 @@ class Compiler:
                     self._compile_expr(node['val'], vt, fname)
                     self.a.copy(vt, ec)
             else:
-                it = self._alloc_temp(fname); vt = self._alloc_temp(fname)
-                self._compile_expr(node['idx'], it, fname)
-                self._compile_expr(node['val'], vt, fname)
+                ix = node['idx']; vl = node['val']
+                # a leaf index stays in place unless it is a global that a call in the
+                # value could change before the store (locals are restored by recursion)
+                in_place = self._is_leaf(ix) and (ix['kind'] == 'int'
+                           or ix['name'] in self._funcs[fname]['lenv']
+                           or not Compiler._mentions(vl, '', True))
+                if in_place: it = self._leaf_cell(ix, fname)
+                else:
+                    it = self._alloc_temp(fname); self._compile_expr(ix, it, fname)
+                if self._is_leaf(vl): vt = self._leaf_cell(vl, fname)
+                else:
+                    vt = self._alloc_temp(fname); self._compile_expr(vl, vt, fname)
                 self._emit_arr_write(g['base_tag'], it, vt)
         elif k == 'if':
             el = self._new_label('else'); en = self._new_label('endif')

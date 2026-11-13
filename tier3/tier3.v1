@@ -446,13 +446,15 @@ func asg(t, x, glob, n1) {
 // expression: lvl 0 cmp, 1 add, 2 mul, 3 unary/primary. Result into cell dest.
 func pe(lvl, dest) {
   var id; var fi; var base; var k; var t; var op; var rec; var n;
-  var cn; var pa; var c; var f; var n0; var lk; var lc2; var rl; var mk; var ll; var lvv; var fd; var rz; var jm; var i2;
+  var cn; var pa; var c; var f; var n0; var lk; var lc2; var rl; var mk; var ll; var lvv; var fd; var rz; var jm; var i2; var lcv; var rv; var sw;
   f = fuse; fuse = 0;
   if (lvl < 3) {
     n0 = nc;
     pe(lvl + 1, dest);
     ll = 0;
     if (leafs == n0) { if (leafe == nc) { if (leafk == 1) { ll = 1; lvv = leafv; } } }
+    lcv = 0;
+    if (leafs == n0) { if (leafe == nc) { if (leafk == 0) { lcv = leafc; } } }
     lk = 0;
     if (f == 1) {
       if (leafs == n0) {
@@ -464,7 +466,7 @@ func pe(lvl, dest) {
     while (lv(tok) == lvl) {
       op = tok; nt(); t = tmp(); n = nc; k = ntemp;
       pe(lvl + 1, t);
-      rl = 0; mk = 0; fd = 0; rz = 0;
+      rl = 0; mk = 0; fd = 0; rz = 0; rv = 0;
       if (leafs == n) {
         if (leafe == nc) {
           nc = n; ntemp = k - 1; leafe = 0 - 1; rl = 1;
@@ -486,7 +488,7 @@ func pe(lvl, dest) {
                 if (rz == 0) { t = newS(leafv); }
               }
             }
-          } else { t = leafc; }
+          } else { t = leafc; rv = 1; }
         }
       }
       if (fd == 0) {
@@ -499,8 +501,12 @@ func pe(lvl, dest) {
             return 0;
           }
         }
-        lk = 0; ll = 0;
-        if (mk == 1) { mulk(dest, leafv, t); } else { if (rz == 1) { cmpzo(op, dest); } else { eop(op, dest, t); } }
+        sw = 0;
+        if (op == 43) { if (lcv != 0) { if (rv == 1) { sw = 1; } } }
+        c = lcv; lk = 0; ll = 0; lcv = 0;
+        if (sw == 1) { nc = n0; cpy(t, dest); add(c, dest); } else {
+          if (mk == 1) { mulk(dest, leafv, t); } else { if (rz == 1) { cmpzo(op, dest); } else { eop(op, dest, t); } }
+        }
       }
     }
     return 0;
@@ -534,6 +540,9 @@ func pe(lvl, dest) {
       cpy(12582914 + ao[id] + leafv, dest);
       return 0;
     } } } } }
+    if (leafs == n) { if (leafe == nc) { if (leafk == 0) {
+      nc = n; ntemp = k - 1; leafe = 0 - 1; t = leafc;
+    } } }
     clr(cNP); sub(cNP, gc[id]); sub(cNP, t);
     ild(cNP, dest);
     return 0;
@@ -581,7 +590,7 @@ func pe(lvl, dest) {
 }
 // block: '{' stmts '}'
 func pb() {
-  var k; var k2; var t; var j; var j2; var l; var id; var mark; var c; var it; var vt; var fb; var fz; var n1; var glob; var ak; var af; var ac;
+  var k; var k2; var t; var j; var j2; var l; var id; var mark; var c; var it; var vt; var fb; var fz; var n1; var glob; var ak; var af; var ac; var n2; var kv;
   nt();
   while (tok != 125) {
     mark = ntemp;
@@ -643,7 +652,13 @@ func pb() {
           vt = tmp(); n1 = nc; lastcall = 0 - 1; lastild = 0 - 1; pe(0, vt); nt();
           if (asg(vt, ac, 2, n1) == 0) { cpy(vt, ac); }
         } else {
-          vt = tmp(); pe(0, vt); nt();
+          if (leafs == n1) { if (leafe == nc) { if (leafk == 0) { if (leafc >= 8388608) { if (leafc < 12582912) {
+            nc = n1; ntemp = ak - 1; leafe = 0 - 1; it = leafc;
+          } } } } }
+          vt = tmp(); n2 = nc; kv = ntemp; pe(0, vt); nt();
+          if (leafs == n2) { if (leafe == nc) { if (leafk == 0) {
+            nc = n2; ntemp = kv - 1; leafe = 0 - 1; vt = leafc;
+          } } }
           clr(cNP); sub(cNP, gc[id]); sub(cNP, it);
           ist(cNP, vt);
         }

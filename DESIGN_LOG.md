@@ -1,86 +1,70 @@
 # COMP01 Design Log
 
-What was tried, what failed, what was learned.
+What was tried, what failed, what was learned. Numbers are from the final tree.
 
----
+## Design in one paragraph
 
-## M0 — Architecture Contracts
+Two compilers share one back end idea. Tier 2 (Python) parses to a syntax tree and emits SUBLEQ
+through an assembler (`tools/asm.py`). Tier 3 (`tier3/tier3.v1`) is a one-pass compiler written in v1
+with no tree, because v1 has no lists or dictionaries and mutual recursion is forbidden, so one
+expression function `pe(level, dest)` and one block function `pb()` do all the work. Both tiers
+emit the same code shapes, so every code generation change has to land in both. Frames are static
+cells; recursion saves live cells on a stack.
 
-**Date:** 2026-11-10
+## What failed, and what fixed it
 
-**Decisions:**
-- Two-pass compiler design chosen (pass 1: parse/count, pass 2: emit)
-- Static function blocks with DAG + self-loop call graph
-- Caller-owned temporaries, single RET cell for return values
-- Stack sized for 1,000-deep recursion of the largest frame
-- Performance targets: 215M ref / official parity gate / 300M stretch
+| Problem | Cause | Fix |
+|---|---|---|
+| Recursion broke (`fact3`, `recursion_max`) | The callee's return jump was patched at each call site, so an inner call overwrote the outer return target | Data-driven return cell `NRC_<fn>`, saved and restored in recursive frames like any other cell |
+| 98/100 on the first differential run | `x = <expr using x>` wrote partial results into `x` | Use a temp, later replaced by a precise rule (below) that proves when writing straight into `x` is safe |
+| `run_gen_test.py` gave false comfort | It only validated the generator | Added `run_diff_test.py`: compiler output against the independent interpreter `v1i.py` |
+| Multiply was far too slow | Repeated addition: `x * 1103515245` cost more than 2e10 steps (limit 1e8) | 31-step binary multiply in both tiers; later entered at the highest bit that can matter |
+| 20 KB program with many `*` overflowed memory | The binary multiply was inlined, about 1,400 words per `*` | One shared `MUL` routine with its own return cell; literals 0..255 still expand inline |
+| First hanoi image was 136k words | A 1,000-deep stack sized for 128 cells | Exact frame sizing and temp reuse |
+| Tier 2 link time was quadratic | Data cells looked up linearly | Offset dictionaries |
+| 55 KB dense program overflowed Tier 3's code buffer | Buffer too small | Raised to 380,000 words |
+| Tier 2 crashed on recursion that appears only in an `if` or `while` condition | The recursion detector scanned statement values only, so no frame save was emitted | Scan conditions and call-statement arguments; test `rec_cond` |
+| Tier 2 crashed on a local declared twice (for example in `if` and `else`) | Duplicate assembler label | Fresh cell per declaration, as Tier 3 already did; test `redecl` |
 
+The last two were found by writing rule-change drills (adding `for`, `&&`, `++`, `/`, bare `return`)
+against our own compiler and by differential tests against `v1i.py`.
 
----
+## Tier 3 and the bootstrap
 
-## M1-M3 - VM, assembler, reference tools
-VM and assembler unit-tested (12/12 each). `v1i.py` is the semantic oracle; `gen.py` +
-`minimize.py` give reproducible random programs and shrinking failures.
+Porting `core.py` and `asm.py` to v1 bit for bit was rejected on paper: too large for the 60 KB limit and
+it needs data structures v1 lacks. The one-pass design is 22,770 bytes with 57 functions.
+`C1 = Tier2(tier3.v1)`, `C2 = C1(tier3.v1)`, `C3 = C2(tier3.v1)`; C2 == C3 at 52,056 words. Self-compile
+takes 5.7e7 steps (limit 1e10). C2 is also run through the differential suite, so the fixpoint is not
+trivially true.
 
-## M4 - Tier 2 compiler
-- **Tried:** patching the callee's return jump at each call site. **Failed:** recursion
-  (`fact3`, `recursion_max`): inner calls overwrite the outer return target.
-- **Fixed:** data-driven return address `NRC_<fn>`, saved in recursive frames. 8/8 reference tests.
+## Optimizations (all in both tiers)
 
-## M5 - Hardening
-- `run_gen_test.py` only validated the generator; added `run_diff_test.py` (compiler vs `v1i`).
-- First run: 98/100. Cause: `x = <expr using x>` compiled partial results straight into `x`.
-  Fixed with a temp. 400/400 afterwards.
+| Change | Idea | Measured effect |
+|---|---|---|
+| Inline double-and-add for `x * literal` (0..255) | No call to `MUL` | not measured on its own |
+| Leaf operands in place, fused compare and branch | No copy to a temp, no separate flag | not measured on its own |
+| Constant folding; assignment without a temp; literal array index as a plain cell | Fold `+ - *` with 32-bit wrap; write straight into `x` when `x` is only read on the left spine (and for a global, no call in a right operand); `a[3]` is a fixed cell | not measured on its own |
+| Compare against literal 0 | SBN only branches on `< 0`, so test `x` directly; `x > 0` is `0 - x < 0`, guarded by an `x < 0` test because `0 - INT_MIN` wraps | loop with three zero compares: 195,083 to 45,051 steps (Tier 2) |
+| Multiply entry dispatch; call arguments straight into callee parameters | Skip leading zero bits (exact: the accumulator is still 0); no copy when no later argument contains a call | multiply loop 71,998 to 38,582; call loop 36,556 to 30,556; `bigmul` worst case 962,189 to 646,989 |
+| Leaf array indexes in place; commutative operand order | `a[i]` and `a[i] = v` use the cells directly; `y + x` becomes `x + y` | array loop of 500 iterations: 52,541 to 40,541 steps |
 
-## M6 - bigmul, hanoi
-Written in v1, compiled by Tier 2. bigmul max 1.6M steps, hanoi 0.4M. The first hanoi image
-was 136k words (1000 x 128 stack): fixed in M7 prep by exact frame sizing and temp reuse.
+Rejected as not worth the risk: loop rotation (about 1 step in 16 per iteration, needs a second
+parse of the condition in the one-pass compiler), inlining, common subexpressions, loop-invariant
+motion (Tier 3 has no tree).
 
-## M7 - Tier 3
-- **Tried (on paper):** porting `core.py` + `asm.py` to v1 bit-for-bit. Rejected: would exceed
-  the 60 KB limit and needs lists/dicts v1 does not have.
-- **Chose:** a one-pass compiler (no AST). Mutual recursion is forbidden in v1, so one
-  `pe(level, dest)` and one `pb()`. Shared `MUL` and `COPY` routines keep code small.
-- **Result:** 13.7 KB. Worked on the first end-to-end run (68/68 differential).
-- Hit: Tier 2 link time was quadratic in data cells; fixed with offset dicts.
-- Hit: a 55 KB dense program overflowed the 200k-word code buffer; raised to 380k.
+## Verification
 
-## M8 - Bootstrap
-C2 == C3 bitwise (42,533 words). Self-compile 170M steps (target 3e9). C2 re-validated by
-the differential suite so the fixpoint is not trivially true.
+- `make test`: 19 reference programs, 100 random programs against `v1i.py`, Tier 1 oracles
+  (hanoi n = 1..8, bigmul 66 cases), Tier 3 differential, bootstrap.
+- `make official`: replays 46 cases on the official Linux VMs, 0 failures. The branch rule is strict
+  `r < 0` in the official VM, confirmed by running it directly.
+- Stress: a 59 KB, 75-function program through Tier 3; a 20 KB program of multiplies through both tiers;
+  200 chained functions; 900 globals.
 
-## M9 - Docs and demo
-`make demo`, `make test`.
+## Known limits
 
-## Post-M9 review against PROBLEM.pdf
-- Branch condition: PROBLEM.pdf and the official `VM_tier1and2` (probe run in Docker) both use
-  strict `r < 0`, so all codegen is right. (A pasted brief said `<=`; it was wrong.)
-- **Multiply was too slow.** Repeated addition made `x * 1103515245` cost more than 2e10 steps
-  (limit 1e8), which would fail any PRNG/hash test. Replaced in Tier 2 and Tier 3 by a 31-step
-  binary multiply (~300 steps, 7.8k steps for the 20-iteration LCG). It also fixes
-  `(-2^31) * odd`. New reference test `tests/reference/mulbig.v1` (256 products vs `v1i`).
-- `tier2/BUILD.md` was still a stub; written.
-
-
-## Hardening pass (official-VM verification)
-- Ran both official Linux ELF VMs directly. `make official`: **42/42 OK, fail=0** (4 Tier 1 programs,
-  17 reference programs through Tier 2, 19 through C1 (reference + tier3 edge tests), boot2/boot3 on VM_tier3; was 26 before
-  the new edge tests). C2 == C3 (42,533 words). `probe.txt` prints `A` on both VMs.
-- Tier 1 byte-exact on the official VM: hanoi n=1..8 equals a reference generator (one move per
-  line, trailing newline), max 405,526 steps; bigmul 157 cases incl. 0*0, 0*x, 40x40 digits,
-  max 1.76M steps; echo/reverse on empty input and 1000 bytes.
-- **Failed / found:** Tier 2 inlined the 31-step multiply (~1,400 words per `*`). A 20 KB
-  program with many `*` produced 12.6M words, far over the 1,048,576-word memory.
-  **Fix:** one shared `MUL` routine, entered through its own `MUL_NRC` cell with the same
-  data-driven return as functions (`tier2/core.py`, `_emit_multiply` / `_emit_mul_routine`).
-  Same 20 KB program: 524k words. Reference, differential and fixpoint suites unchanged.
-- Earlier recursion bug (kept here on purpose): patching the callee's RETJMP at each call site
-  made inner recursive calls overwrite the outer return address (`fact3`, `recursion_max`).
-  Fixed by the per-function `NRC_<fn>` cell, which recursive frames save and restore like data.
-- New reference tests: params8, io_edges (getc EOF, putc low 8 bits), cmp_literals (2e9 compares,
-  wraparound, 2147483647), control (else { if }, while truthiness, local hides global),
-  names_comments (24-char names), syntax_misc, deep_rec (depth 999), bigarray (1M-word array).
-- `tools/gen_stress.py`: ~59 KB / 75-function program: C1 emits 131k words and the output matches
-  the oracle; a 19 KB program through Tier 2 compiles in 0.2 s.
-- **Known limit:** Tier 3 arrays are safe up to about 1,046,885 words (Tier 2: 1,047,133); the spec
-  gives no maximum. Not changed, because editing `tier3.v1` changes C2/C3.
+- Largest global array that compiles and runs under Tier 3: 1,046,782 words (the spec gives no maximum).
+- Each self-call site inlines a push and pop of every live cell (about 58 words per cell). A single
+  20 KB function with 24 live locals and about 800 recursive call sites does not fit in memory, and
+  Tier 3's 380,000-word code buffer would overrun first. Realistic programs use a tenth of that.
+- Locals are function-scoped, not block-scoped. Declaring a name twice gives a new cell.

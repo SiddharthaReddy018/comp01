@@ -8,6 +8,15 @@ SHELL := /bin/bash
 
 COMP01_KIT ?=
 SKIP_OFFICIAL ?= 0
+# No kit given: run everything except the replay on the official VM binaries
+ifeq ($(strip $(COMP01_KIT)),)
+ifneq ($(SKIP_OFFICIAL),1)
+ifeq ($(MAKELEVEL),0)
+$(info NOTE: COMP01_KIT is not set, so the official VM checks are skipped. Set COMP01_KIT to include them.)
+endif
+SKIP_OFFICIAL := 1
+endif
+endif
 ARTIFACTS := artifacts/test-results
 
 $(ARTIFACTS):

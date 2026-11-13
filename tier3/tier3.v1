@@ -109,18 +109,15 @@ func mkmul() {
   return 0;
 }
 func mkcopy() {
-  var l; var j1; var j2; var j3;
+  var l; var b0;
   entc = hr();
   l = hr();
-  j1 = bnf(cCN);
-  clr(10); sub(10, cCN);
-  j2 = bnf(10);
-  j3 = jfw();
-  setl(j2);
-  clr(cPS); sub(cPS, cCS); clr(cPD); sub(cPD, cCD);
-  ild(cPS, cTV); ist(cPD, cTV);
-  sub(cCS, 5); sub(cCD, 5); sub(cCN, 7); jmp(l);
-  setl(j1); setl(j3);
+  b0 = nc;
+  pat(b0 + 37, cCD); pat(b0 + 38, cCD); pat(b0 + 40, cCD); pat(b0 + 41, cCS);
+  ins(2, 2, nc + 16);
+  ins(2, 2, nc + 16);
+  sub(cCS, 7); sub(cCD, 7); sub(cCN, 5);
+  ins(cCN, 6, l);
   epi(nrcc);
   return 0;
 }
@@ -311,9 +308,9 @@ func pe(lvl, dest) {
     rec = 0;
     if (fi == curf) { rec = 1; }
     if (rec == 1) {
-      if (fpa[fi] == 0) { fpa[fi] = newS(0); reg(2, ffb[fi]); }
+      if (fpa[fi] == 0) { fpa[fi] = newS(0); reg(5, ffb[fi]); }
       pa = fpa[fi];
-      cn = newS(nF - ffb[fi]);
+      cn = newS(ffb[fi] - nF);
       cpy(pa, cCS); cpy(cSP, cCD); cpy(cn, cCN); add(cn, cSP);
       callr(nrcc, entc);
     }
@@ -453,7 +450,7 @@ func main() {
   cMA = newS(0); cMB = newS(0); cMR = newS(0); cMS = newS(0);
   cCS = newS(0); cCD = newS(0); cCN = newS(0); cPS = newS(0); cPD = newS(0);
   cTV = newS(0); cNP = newS(0); cNV = newS(0); nrcm = newS(0); nrcc = newS(0);
-  cSP = newS(0); spent = reg(3, 0);
+  cSP = newS(0); spent = reg(4, 0);
   kw(3, 118, 97, 114, 0, 0, 0, 3);
   kw(5, 97, 114, 114, 97, 121, 0, 4);
   kw(4, 102, 117, 110, 99, 0, 0, 5);
@@ -489,6 +486,8 @@ func main() {
     c = rcell[i];
     if (rkind[i] == 2) { di[c] = rval[i] + F0; }
     if (rkind[i] == 3) { di[c] = rval[i] + A0; }
+    if (rkind[i] == 4) { di[c] = 0 - (rval[i] + A0); }
+    if (rkind[i] == 5) { di[c] = 0 - (rval[i] + F0); }
     i = i + 1;
   }
   po(3); po(4); po(11); po(-1); po(0); po(1); po(0); po(0); po(0); po(0); po(0);

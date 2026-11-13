@@ -559,7 +559,7 @@ class Compiler:
         if is_self:
             cfi = self._funcs[caller]
             cells_to_save = ([cfi['neg_ret_cell']] + list(cfi['param_tags'])
-                             + list(cfi['local_tags']) + list(cfi['temp_tags']))
+                             + list(cfi['local_tags']) + list(cfi['temp_tags'][:cfi['next_temp']]))
             self._emit_push_frame(callee, cells_to_save)
 
         # Copy temps → callee params
@@ -672,20 +672,40 @@ class Compiler:
     # ── Frame push/pop for self-recursion ────────────────────────────────────
 
     def _emit_push_frame(self, fname, cells):
-        """Push list of cells onto fname's stack. sp_local incremented per cell."""
-        fi = self._funcs[fname]
-        sp = fi['sp_local']; base = fi['stack_base_tag']
+        """Push cells onto fname's stack (negated), ~9 steps per cell.
+        sp_local holds -(absolute stack pointer), set post-link."""
+        spn = self._funcs[fname]['sp_local']
+        one = self._const(1)
         for cell in cells:
-            self._emit_arr_write(base, sp, cell)
-            self.a.add(self._const(1), sp)
+            p_ca = len(self.a._code)
+            self.a.instruction(0, 0, self.a.here_plus(3))
+            self.a.instruction(0, spn, self.a.here_plus(3))
+            p_cb = len(self.a._code)
+            self.a.instruction(0, 0, self.a.here_plus(3))
+            self.a.instruction(0, spn, self.a.here_plus(3))
+            p_sa = len(self.a._code)
+            self.a.instruction(0, 0, self.a.here_plus(3))
+            self.a.instruction(0, spn, self.a.here_plus(3))
+            wclr = len(self.a._code)
+            self.a.instruction(0, 0, self.a.here_plus(3))       # (sp,sp)   mem[sp] = 0
+            wsto = len(self.a._code)
+            self.a.instruction(0, cell, self.a.here_plus(3))    # (sp,cell) mem[sp] = -cell
+            self._arr_patches.append(('w', p_ca, p_cb, p_sa, wclr, wsto))
+            self.a.sub(one, spn)                                # sp += 1
 
     def _emit_pop_frame(self, fname, cells):
-        """Pop cells in reverse order from fname's stack."""
-        fi = self._funcs[fname]
-        sp = fi['sp_local']; base = fi['stack_base_tag']
+        """Pop cells in reverse order; stored values are negated, so result = 0 - mem[sp]."""
+        spn = self._funcs[fname]['sp_local']
+        neg1 = self._const(-1)
         for cell in reversed(cells):
-            self.a.sub(self._const(1), sp)
-            self._emit_arr_read(base, sp, cell)
+            self.a.sub(neg1, spn)                               # sp -= 1
+            self.a.clear(cell)
+            p_rb = len(self.a._code)
+            self.a.instruction(0, 0, self.a.here_plus(3))
+            self.a.instruction(0, spn, self.a.here_plus(3))
+            rlrd = len(self.a._code)
+            self.a.instruction(cell, 0, self.a.here_plus(3))    # cell -= mem[sp] -> val
+            self._arr_patches.append(('r', p_rb, rlrd))
 
     # ── Recursion detector ────────────────────────────────────────────────────
 
@@ -819,6 +839,7 @@ class Compiler:
         for finfo in self._funcs.values():
             if finfo['is_recursive']:
                 words[da(finfo['stack_base_tag'])] = da(finfo['stack_data_tag'])
+                words[da(finfo['sp_local'])] = -da(finfo['stack_data_tag'])
 
         # Post-link: array patches
         for patch in self._arr_patches:

@@ -305,10 +305,13 @@ class Compiler:
 
     # ── Signed comparison ─────────────────────────────────────────────────────
 
-    def _emit_signed_cmp(self, x_cell, y_cell, result_cell, op):
-        """result_cell = (x op y) ? 1 : 0  — true signed per spec."""
-        one  = self._const(1); zero = self._const(0)
-        tru  = self._new_label('ct'); fal = self._new_label('cf')
+    def _emit_signed_cmp(self, x_cell, y_cell, result_cell, op, fal_lbl=None):
+        """result_cell = (x op y) ? 1 : 0  — true signed per spec.
+        With fal_lbl: no result; jump to fal_lbl when false, fall through when true."""
+        if fal_lbl is None:
+            one = self._const(1); zero = self._const(0)
+        tru  = self._new_label('ct')
+        fal  = fal_lbl if fal_lbl is not None else self._new_label('cf')
         end  = self._new_label('ce'); same = self._new_label('cs')
         xneg = self._new_label('cxn'); xge_yneg = self._new_label('cxyn')
 
@@ -359,6 +362,9 @@ class Compiler:
             self.a.branch_if_neg('SCR2', tru)
 
         self.a.jump(fal)
+        if fal_lbl is not None:
+            self.a.label(tru)
+            return
         self.a.label(tru); self.a.copy(one,  result_cell); self.a.jump(end)
         self.a.label(fal); self.a.copy(zero, result_cell)
         self.a.label(end)
@@ -527,9 +533,13 @@ class Compiler:
             self.a.negate_inplace(dest)
         elif k == 'binop':
             op = node['op']
-            rt = self._alloc_temp(fname)
             self._compile_expr(node['left'],  dest, fname)
-            self._compile_expr(node['right'], rt,   fname)
+            rn = node['right']
+            if self._is_leaf(rn):
+                rt = self._leaf_cell(rn, fname)      # leaf operand used in place
+            else:
+                rt = self._alloc_temp(fname)
+                self._compile_expr(rn, rt, fname)
             if op == '+': self.a.add(rt, dest)
             elif op == '-': self.a.sub(rt, dest)
             elif op == '*': self._emit_multiply(dest, rt, dest)
@@ -539,6 +549,29 @@ class Compiler:
             self._compile_call(node['name'], node['args'], dest, fname)
         else:
             raise CompileError(f"Unknown expr kind: {k!r}")
+
+    def _is_leaf(self, n): return n['kind'] in ('int', 'var')
+
+    def _leaf_cell(self, n, fname):
+        if n['kind'] == 'int': return self._const(n['val'])
+        return self._lookup(n['name'], fname)
+
+    def _cond_jump_false(self, node, lbl, fname):
+        """Jump to lbl if node evaluates to 0; fall through otherwise."""
+        if node['kind'] == 'binop' and node['op'] in ('<', '<=', '>', '>=', '==', '!='):
+            l = node['left']; r = node['right']
+            if self._is_leaf(l) and self._is_leaf(r):
+                xc = self._leaf_cell(l, fname); yc = self._leaf_cell(r, fname)
+            else:
+                xc = self._alloc_temp(fname); self._compile_expr(l, xc, fname)
+                if self._is_leaf(r): yc = self._leaf_cell(r, fname)
+                else:
+                    yc = self._alloc_temp(fname); self._compile_expr(r, yc, fname)
+            self._emit_signed_cmp(xc, yc, None, node['op'], fal_lbl=lbl)
+        else:
+            ct = self._alloc_temp(fname)
+            self._compile_expr(node, ct, fname)
+            self._branch_if_zero(ct, lbl)
 
     # ── Call compilation ──────────────────────────────────────────────────────
 
@@ -612,10 +645,10 @@ class Compiler:
             self._compile_expr(node['val'], vt, fname)
             self._emit_arr_write(g['base_tag'], it, vt)
         elif k == 'if':
-            ct = self._alloc_temp(fname)
-            self._compile_expr(node['cond'], ct, fname)
             el = self._new_label('else'); en = self._new_label('endif')
-            self._branch_if_zero(ct, el)
+            m0 = self._funcs[fname]['next_temp']
+            self._cond_jump_false(node['cond'], el, fname)
+            self._funcs[fname]['next_temp'] = m0     # condition temps are dead
             for s in node['then']: self._compile_stmt(s, fname)
             self.a.jump(en); self.a.label(el)
             if node['else_']:
@@ -623,10 +656,10 @@ class Compiler:
             self.a.label(en)
         elif k == 'while':
             ll = self._new_label('wl'); xl = self._new_label('wx')
-            ct = self._alloc_temp(fname)
+            m0 = self._funcs[fname]['next_temp']
             self.a.label(ll)
-            self._compile_expr(node['cond'], ct, fname)
-            self._branch_if_zero(ct, xl)
+            self._cond_jump_false(node['cond'], xl, fname)
+            self._funcs[fname]['next_temp'] = m0     # condition temps are dead
             for s in node['body']: self._compile_stmt(s, fname)
             self.a.jump(ll); self.a.label(xl)
         elif k == 'return':

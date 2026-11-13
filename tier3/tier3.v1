@@ -226,6 +226,45 @@ func cmpbr(op, x, y) {
   setl(j2);
   return 0;
 }
+func posj(x, chk) {
+  var j0; var j;
+  j0 = 0;
+  if (chk == 1) { j0 = bnf(x); }
+  clr(10); sub(10, x);
+  j = bnf(10);
+  if (chk == 1) { setl(j0); }
+  return j;
+}
+func cmpzb(op, x) {
+  var j1; var j2;
+  if (op == 60) { j1 = bnf(x); fpush(jfw()); setl(j1); return 0; }
+  if (op == 201) { fpush(bnf(x)); return 0; }
+  if (op == 62) {
+    fpush(bnf(x));
+    j1 = posj(x, 0);
+    fpush(jfw());
+    setl(j1);
+    return 0;
+  }
+  if (op == 200) { fpush(posj(x, 1)); return 0; }
+  if (op == 202) { fpush(bnf(x)); fpush(posj(x, 0)); return 0; }
+  j1 = bnf(x);
+  j2 = posj(x, 0);
+  fpush(jfw());
+  setl(j1); setl(j2);
+  return 0;
+}
+func cmpzo(op, x) {
+  var b; var je;
+  b = fsp;
+  cmpzb(op, x);
+  setb(x, 1);
+  je = jfw();
+  fpatch(b);
+  setb(x, 0);
+  setl(je);
+  return 0;
+}
 func mulk(d, k, x) {
   var m; var i; var r;
   if (k == 0) { clr(d); return 0; }
@@ -385,7 +424,7 @@ func asg(t, x, glob, n1) {
 // expression: lvl 0 cmp, 1 add, 2 mul, 3 unary/primary. Result into cell dest.
 func pe(lvl, dest) {
   var id; var fi; var base; var k; var t; var op; var rec; var n;
-  var cn; var pa; var c; var f; var n0; var lk; var lc2; var rl; var mk; var ll; var lvv; var fd;
+  var cn; var pa; var c; var f; var n0; var lk; var lc2; var rl; var mk; var ll; var lvv; var fd; var rz;
   f = fuse; fuse = 0;
   if (lvl < 3) {
     n0 = nc;
@@ -403,7 +442,7 @@ func pe(lvl, dest) {
     while (lv(tok) == lvl) {
       op = tok; nt(); t = tmp(); n = nc; k = ntemp;
       pe(lvl + 1, t);
-      rl = 0; mk = 0; fd = 0;
+      rl = 0; mk = 0; fd = 0; rz = 0;
       if (leafs == n) {
         if (leafe == nc) {
           nc = n; ntemp = k - 1; leafe = 0 - 1; rl = 1;
@@ -420,7 +459,10 @@ func pe(lvl, dest) {
             } }
             if (fd == 0) {
               if (op == 42) { if (leafv >= 0) { if (leafv < 256) { mk = 1; } } }
-              if (mk == 0) { t = newS(leafv); }
+              if (mk == 0) {
+                if (lvl == 0) { if (leafv == 0) { rz = 1; } }
+                if (rz == 0) { t = newS(leafv); }
+              }
             }
           } else { t = leafc; }
         }
@@ -430,13 +472,13 @@ func pe(lvl, dest) {
           if (lv(tok) != 0) {
             c = dest;
             if (lk == 1) { if (rl == 1) { nc = n0; leafe = 0 - 1; c = lc2; } }
-            cmpbr(op, c, t);
+            if (rz == 1) { cmpzb(op, c); } else { cmpbr(op, c, t); }
             fused = 1;
             return 0;
           }
         }
         lk = 0; ll = 0;
-        if (mk == 1) { mulk(dest, leafv, t); } else { eop(op, dest, t); }
+        if (mk == 1) { mulk(dest, leafv, t); } else { if (rz == 1) { cmpzo(op, dest); } else { eop(op, dest, t); } }
       }
     }
     return 0;

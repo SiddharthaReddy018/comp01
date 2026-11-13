@@ -380,6 +380,47 @@ class Compiler:
         self.a.label(fal); self.a.copy(zero, result_cell)
         self.a.label(end)
 
+    def _emit_cmp_zero(self, x_cell, result_cell, op, fal_lbl=None):
+        """x op 0 (literal zero on the right). SBN branches only on <0, so
+        x>0 is tested as 0-x<0 in SCR1. No sign dispatch, no overflow case."""
+        if fal_lbl is None:
+            one = self._const(1); zero = self._const(0)
+        tru = self._new_label('zt')
+        fal = fal_lbl if fal_lbl is not None else self._new_label('zf')
+        end = self._new_label('ze')
+        Z = FIXED['SCR1']
+        def pos_test(target, known_nonneg=False):   # jump to target when x > 0
+            # 0 - INT_MIN wraps negative, so x<0 must be ruled out first
+            skip = self._new_label('zs')
+            if not known_nonneg: self.a.branch_if_neg(x_cell, skip)
+            self.a.instruction(Z, Z, self.a._next())
+            self.a.instruction(Z, self.a._f(x_cell), target)
+            if not known_nonneg: self.a.label(skip)
+        if op == '<':
+            self.a.branch_if_neg(x_cell, tru)
+        elif op == '>=':
+            self.a.branch_if_neg(x_cell, fal)
+            self.a.jump(tru)
+        elif op == '>':
+            pos_test(tru)
+        elif op == '<=':
+            pos_test(fal)
+            self.a.jump(tru)
+        elif op == '==':
+            self.a.branch_if_neg(x_cell, fal)
+            pos_test(fal, True)
+            self.a.jump(tru)
+        elif op == '!=':
+            self.a.branch_if_neg(x_cell, tru)
+            pos_test(tru, True)
+        self.a.jump(fal)
+        if fal_lbl is not None:
+            self.a.label(tru)
+            return
+        self.a.label(tru); self.a.copy(one,  result_cell); self.a.jump(end)
+        self.a.label(fal); self.a.copy(zero, result_cell)
+        self.a.label(end)
+
     # ── Signed multiply (binary, ~300 steps) ─────────────────
 
     def _emit_multiply(self, a_cell, b_cell, result_cell):
@@ -575,7 +616,9 @@ class Compiler:
             if op == '+': self.a.add(rt, dest)
             elif op == '-': self.a.sub(rt, dest)
             elif op == '*': self._emit_multiply(dest, rt, dest)
-            elif op in ('<','<=','>','>=','==','!='): self._emit_signed_cmp(dest, rt, dest, op)
+            elif op in ('<','<=','>','>=','==','!='):
+                if rn['kind'] == 'int' and rn['val'] == 0: self._emit_cmp_zero(dest, dest, op)
+                else: self._emit_signed_cmp(dest, rt, dest, op)
             else: raise CompileError(f"Unknown op: {op!r}")
         elif k == 'call':
             self._compile_call(node['name'], node['args'], dest, fname)
@@ -654,7 +697,8 @@ class Compiler:
                 if self._is_leaf(r): yc = self._leaf_cell(r, fname)
                 else:
                     yc = self._alloc_temp(fname); self._compile_expr(r, yc, fname)
-            self._emit_signed_cmp(xc, yc, None, node['op'], fal_lbl=lbl)
+            if r['kind'] == 'int' and r['val'] == 0: self._emit_cmp_zero(xc, None, node['op'], fal_lbl=lbl)
+            else: self._emit_signed_cmp(xc, yc, None, node['op'], fal_lbl=lbl)
         else:
             ct = self._alloc_temp(fname)
             self._compile_expr(node, ct, fname)

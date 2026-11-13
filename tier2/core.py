@@ -388,6 +388,19 @@ class Compiler:
         self._call_sites.append({'callee': None, 'ret_cell': ret_cell, 'ret_lbl': ret_lbl})
         self.a.copy(m['MUL_R'], result_cell)
 
+    def _emit_mul_const(self, dest, k, fname):
+        """dest *= k for a literal 0 <= k <= 255: inline double-and-add (3 steps per add)."""
+        if k == 0:
+            self.a.copy(self._const(0), dest)
+            return
+        if k == 1:
+            return
+        tx = self._alloc_temp(fname)
+        self.a.copy(dest, tx)
+        for bit in bin(k)[3:]:
+            self.a.add(dest, dest)
+            if bit == '1': self.a.add(tx, dest)
+
     def _emit_mul_routine(self):
         zero = self._const(0); one = self._const(1); c2 = self._const(2)
         ma = self._mul['MUL_A']; mb = self._mul['MUL_B']
@@ -535,6 +548,9 @@ class Compiler:
             op = node['op']
             self._compile_expr(node['left'],  dest, fname)
             rn = node['right']
+            if op == '*' and rn['kind'] == 'int' and 0 <= rn['val'] <= 255:
+                self._emit_mul_const(dest, rn['val'], fname)
+                return
             if self._is_leaf(rn):
                 rt = self._leaf_cell(rn, fname)      # leaf operand used in place
             else:

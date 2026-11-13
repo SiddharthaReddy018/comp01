@@ -1,6 +1,6 @@
 /*
  * vm.c — COMP01 SUBLEQ virtual machine
- * Exact official semantics per PROBLEM.pdf + COMP01_AGENT_BRIEF_v3.md §2B
+ * Exact official semantics per PROBLEM.pdf
  *
  * Usage: ./vm program.txt < input.txt
  *   Exit 0: normal halt (pc outside 0..N-3)

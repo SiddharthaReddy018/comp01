@@ -69,8 +69,7 @@ test-m1: | $(ARTIFACTS)
 	@if [ "$(SKIP_OFFICIAL)" = "1" ]; then \
 		echo "OFFICIAL VM: NOT TESTED (SKIP_OFFICIAL=1)"; \
 	else \
-		echo "--- Official VM differential (TODO: 2000-program suite) ---"; \
-		echo "OFFICIAL VM: NOT IMPLEMENTED YET"; \
+		echo "OFFICIAL VM: replay everything with 'make official' (tools/official_check.sh)"; \
 	fi
 	@echo "PASS: M1 local tests complete."
 

@@ -41,11 +41,6 @@ TIER3_V1_SIZE_HARD   = 60_000   # bytes, hard limit
 TIER3_STEP_TARGET    = 3_000_000_000  # 3×10^9 steps target for self-compile
 TIER3_STEP_HARD      = 10_000_000_000 # 10^10 hard limit
 
-# VM performance targets (steps/second)
-VM_PERF_REFERENCE  = 215_000_000   # 215M — initial reference
-VM_PERF_HARD_GATE  = None           # same-machine official parity (set after M1)
-VM_PERF_STRETCH    = 300_000_000   # 300M — stretch goal
-
 # Stack sizing (derived)
 # Stack region = (largest_recursive_block + 2) × (MAX_RECURSION_DEPTH + 1)
 # Actual value computed after codegen is known

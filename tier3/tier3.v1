@@ -18,7 +18,7 @@ array rcell[1100]; array rkind[1100]; array rval[1100];
 array nms[4100]; array nml[4100]; array hn[4100]; array hb[1024]; array kt[4100];
 array gk[4100]; array gc[4100]; array lc[4100]; array lst[2048];
 array fe[256]; array fnp[256]; array fnrc[256]; array ffb[256]; array fpa[256];
-array fjs[256]; array p2[10]; array tp[32]; array fpar[2048]; array tcell[4096]; array at[4096]; array pw[10];
+array lv[4100]; array fjs[256]; array p2[10]; array tp[32]; array fpar[2048]; array tcell[4096]; array at[4096]; array pw[10];
 
 func em(w) { code[nc] = w; nc = nc + 1; return 0; }
 func ins(a, b, c) { em(a); em(b); em(c); return 0; }
@@ -109,17 +109,42 @@ func mkmul() {
   epi(nrcm);
   return 0;
 }
-func mkcopy() {
-  var l; var b0;
-  entc = hr();
-  l = hr();
+func spush(c) {
+  var b0;
   b0 = nc;
-  pat(b0 + 37, cCD); pat(b0 + 38, cCD); pat(b0 + 40, cCD); pat(b0 + 41, cCS);
+  pat(b0 + 31, cSP); pat(b0 + 32, cSP); pat(b0 + 34, cSP);
   ins(2, 2, nc + 16);
-  ins(2, 2, nc + 16);
-  sub(cCS, 7); sub(cCD, 7); sub(cCN, 5);
-  ins(cCN, 6, l);
-  epi(nrcc);
+  ins(2, c, nc + 16);
+  sub(cSP, 7);
+  return 0;
+}
+func spop(c) {
+  var b0;
+  sub(cSP, 5);
+  b0 = nc;
+  pat(b0 + 23, cSP);
+  clr(c);
+  ins(c, 2, nc + 16);
+  return 0;
+}
+func mklive(fb) {
+  var i; var o;
+  o = 1;
+  while (o <= nF - fb) { lv[o] = 0; o = o + 1; }
+  i = ntemp;
+  while (i < ntc) { lv[tcell[i] - 8388609 - fb] = 1; i = i + 1; }
+  return 0;
+}
+func fsave(fb) {
+  var o;
+  o = 1;
+  while (o <= nF - fb) { if (lv[o] == 0) { spush(8388609 + fb + o); } o = o + 1; }
+  return 0;
+}
+func frest(fb) {
+  var o;
+  o = nF - fb;
+  while (o >= 1) { if (lv[o] == 0) { spop(8388609 + fb + o); } o = o - 1; }
   return 0;
 }
 func cmpop(op, x, y) {
@@ -403,18 +428,14 @@ func pe(lvl, dest) {
     rec = 0;
     if (fi == curf) { rec = 1; }
     if (rec == 1) {
-      if (fpa[fi] == 0) { fpa[fi] = newS(0); reg(5, ffb[fi]); }
-      pa = fpa[fi];
-      cn = newS(ffb[fi] - nF);
-      cpy(pa, cCS); cpy(cSP, cCD); cpy(cn, cCN); add(cn, cSP);
-      callr(nrcc, entc);
+      mklive(ffb[fi]);
+      fsave(ffb[fi]);
     }
     n = 0;
     while (n < k) { cpy(at[base + n], fpar[fi * 8 + n]); n = n + 1; }
     callr(fnrc[fi], fe[fi]);
     if (rec == 1) {
-      sub(cSP, cn); cpy(cSP, cCS); cpy(pa, cCD); cpy(cn, cCN);
-      callr(nrcc, entc);
+      frest(ffb[fi]);
     }
     cpy(8, dest);
     ad = ad - 1;
@@ -563,7 +584,7 @@ func main() {
   kw(4, 112, 117, 116, 99, 0, 0, 11);
   mid = kw(4, 109, 97, 105, 110, 0, 0, 0);
   bootj = jfw();
-  mkmul(); mkcopy();
+  mkmul();
   ch = getc(); nt();
   while (tok != 0) {
     c = tok;

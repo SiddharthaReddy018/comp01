@@ -1,0 +1,7 @@
+// the same local name declared in sibling blocks
+func blk(x) {
+    if (x > 0) { var t; t = x * 2; return t; } else { var t; t = x * 3; return t; }
+}
+func main() {
+    putc(48 + blk(2)); putc(48 + blk(0 - 1) + 5); putc(10);
+}

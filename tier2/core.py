@@ -795,7 +795,10 @@ class Compiler:
     def _compile_stmt_inner(self, node, fname):
         k = node['kind']
         if k == 'var_decl':
-            tag = self.a.alloc(f'L_{fname}_{node["name"]}', 0)
+            try:
+                tag = self.a.alloc(f'L_{fname}_{node["name"]}', 0)
+            except ValueError:                       # same name declared again (e.g. in a sibling block)
+                tag = self.a.alloc(f'L_{fname}_{node["name"]}_{self._new_label("redecl")}', 0)
             self._funcs[fname]['lenv'][node['name']] = tag
             self._funcs[fname]['local_tags'].append(tag)
         elif k == 'assign':

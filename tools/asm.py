@@ -135,6 +135,8 @@ class Assembler:
                 if name not in self._labels:
                     raise ValueError(f"Unresolved label: {name!r}")
                 return NUM_FIXED + self._labels[name]
+            if kind == 'data+':          # element of a data array: (name, index)
+                return data_base + offs[name[0]] + name[1]
             if kind == 'addr':
                 return name
             raise ValueError(f"Unknown tag kind: {kind!r}")

@@ -189,21 +189,32 @@ class Parser:
         left = self._parse_mul()
         while self.lex.at(TK_PLUS) or self.lex.at(TK_MINUS):
             op = self.lex.val; self.lex.advance()
-            left = {'kind':'binop','op':op,'left':left,'right':self._parse_mul()}
+            left = self._mkbin(op, left, self._parse_mul())
         return left
 
     def _parse_mul(self):
         left = self._parse_unary()
         while self.lex.at(TK_STAR):
             self.lex.advance()
-            left = {'kind':'binop','op':'*','left':left,'right':self._parse_unary()}
+            left = self._mkbin('*', left, self._parse_unary())
         return left
 
     def _parse_unary(self):
         if self.lex.at(TK_MINUS):
             self.lex.advance()
-            return {'kind':'unary','op':'-','expr':self._parse_unary()}
+            e = self._parse_unary()
+            if e['kind'] == 'int': return {'kind':'int','val':wrap32(-e['val'])}
+            return {'kind':'unary','op':'-','expr':e}
         return self._parse_primary()
+
+    @staticmethod
+    def _mkbin(op, l, r):
+        # constant folding of + - * on two literals (32-bit wrap)
+        if l['kind'] == 'int' and r['kind'] == 'int':
+            a = l['val']; b = r['val']
+            v = a + b if op == '+' else (a - b if op == '-' else a * b)
+            return {'kind':'int','val':wrap32(v)}
+        return {'kind':'binop','op':op,'left':l,'right':r}
 
     def _parse_primary(self):
         L = self.lex
@@ -526,14 +537,19 @@ class Compiler:
         if k == 'int':
             self.a.copy(self._const(node['val']), dest)
         elif k == 'var':
-            self.a.copy(self._lookup(node['name'], fname), dest)
+            c = self._lookup(node['name'], fname)
+            if c != dest: self.a.copy(c, dest)
         elif k == 'arr_read':
             g = self._globals.get(node['name'])
             if g is None or g['kind'] != 'array':
                 raise CompileError(f"Undefined array: {node['name']!r}")
-            it = self._alloc_temp(fname)
-            self._compile_expr(node['idx'], it, fname)
-            self._emit_arr_read(g['base_tag'], it, dest)
+            ec = self._elem_cell(node['name'], node['idx'])
+            if ec is not None:                       # literal in-range index: direct cell
+                if ec != dest: self.a.copy(ec, dest)
+            else:
+                it = self._alloc_temp(fname)
+                self._compile_expr(node['idx'], it, fname)
+                self._emit_arr_read(g['base_tag'], it, dest)
         elif k == 'getc':
             self.a.getc(dest)
         elif k == 'putc':
@@ -567,6 +583,61 @@ class Compiler:
             raise CompileError(f"Unknown expr kind: {k!r}")
 
     def _is_leaf(self, n): return n['kind'] in ('int', 'var')
+
+    def _elem_cell(self, name, idx):
+        # data cell of a[idx] when idx is a literal inside the declared size, else None
+        if idx['kind'] != 'int': return None
+        g = self._globals[name]
+        if 0 <= idx['val'] < g['size']: return ('data+', (g['arr_data_tag'][1], idx['val']))
+        return None
+
+    @staticmethod
+    def _touches(n, name):
+        # True if n contains a call or any read of array `name`
+        k = n['kind']
+        if k == 'call': return True
+        if k == 'arr_read': return n['name'] == name or Compiler._touches(n['idx'], name)
+        if k in ('int', 'getc', 'var'): return False
+        if k == 'binop': return Compiler._touches(n['left'], name) or Compiler._touches(n['right'], name)
+        return Compiler._touches(n['expr'], name)
+
+    @staticmethod
+    def _direct_elem_ok(n, name, c):
+        # a[c] = n computed straight into the element: reads of that array only as a[c]
+        # on the left spine; no call or read of the array in right operands
+        k = n['kind']
+        if k == 'binop':
+            return (Compiler._direct_elem_ok(n['left'], name, c)
+                    and not Compiler._touches(n['right'], name))
+        if k == 'unary': return Compiler._direct_elem_ok(n['expr'], name, c)
+        if k == 'arr_read':
+            if n['name'] != name: return True            # index goes to a temp first
+            return n['idx']['kind'] == 'int' and n['idx']['val'] == c
+        return True   # leaf, getc, putc, call (args go to temps, result written last)
+
+    @staticmethod
+    def _mentions(n, x, calls):
+        # True if expression n reads variable x (or, when calls is set, contains a call)
+        k = n['kind']
+        if k == 'var': return n['name'] == x
+        if k == 'call':
+            return calls or any(Compiler._mentions(a, x, calls) for a in n['args'])
+        if k in ('int', 'getc'): return False
+        if k == 'binop': return Compiler._mentions(n['left'], x, calls) or Compiler._mentions(n['right'], x, calls)
+        if k == 'arr_read': return Compiler._mentions(n['idx'], x, calls)
+        return Compiler._mentions(n['expr'], x, calls)   # unary, putc
+
+    @staticmethod
+    def _direct_ok(n, x, is_glob):
+        # x = n may be computed straight into x if every read of x happens before
+        # the first write of x: x only on the left spine, never in a right operand
+        # (and for a global x no call in a right operand, the callee could read it).
+        k = n['kind']
+        if k == 'binop':
+            return (Compiler._direct_ok(n['left'], x, is_glob)
+                    and not Compiler._mentions(n['right'], x, is_glob))
+        if k == 'unary': return Compiler._direct_ok(n['expr'], x, is_glob)
+        return True   # leaf, getc, putc, arr_read (index goes to a temp), call (args go to temps)
 
     def _leaf_cell(self, n, fname):
         if n['kind'] == 'int': return self._const(n['val'])
@@ -649,17 +720,30 @@ class Compiler:
             if name in fi['lenv']: dest = fi['lenv'][name]
             elif name in self._globals: dest = self._globals[name]['tag']
             else: raise CompileError(f"Undefined variable: {name!r}")
-            vt = self._alloc_temp(fname)
-            self._compile_expr(node['val'], vt, fname)
-            self.a.copy(vt, dest)
+            is_glob = name not in fi['lenv']
+            if self._direct_ok(node['val'], name, is_glob):
+                self._compile_expr(node['val'], dest, fname)   # no temp
+            else:
+                vt = self._alloc_temp(fname)
+                self._compile_expr(node['val'], vt, fname)
+                self.a.copy(vt, dest)
         elif k == 'arr_assign':
             g = self._globals.get(node['name'])
             if g is None or g['kind'] != 'array':
                 raise CompileError(f"Undefined array: {node['name']!r}")
-            it = self._alloc_temp(fname); vt = self._alloc_temp(fname)
-            self._compile_expr(node['idx'], it, fname)
-            self._compile_expr(node['val'], vt, fname)
-            self._emit_arr_write(g['base_tag'], it, vt)
+            ec = self._elem_cell(node['name'], node['idx'])
+            if ec is not None:                       # literal in-range index: direct cell
+                if self._direct_elem_ok(node['val'], node['name'], node['idx']['val']):
+                    self._compile_expr(node['val'], ec, fname)
+                else:
+                    vt = self._alloc_temp(fname)
+                    self._compile_expr(node['val'], vt, fname)
+                    self.a.copy(vt, ec)
+            else:
+                it = self._alloc_temp(fname); vt = self._alloc_temp(fname)
+                self._compile_expr(node['idx'], it, fname)
+                self._compile_expr(node['val'], vt, fname)
+                self._emit_arr_write(g['base_tag'], it, vt)
         elif k == 'if':
             el = self._new_label('else'); en = self._new_label('endif')
             m0 = self._funcs[fname]['next_temp']

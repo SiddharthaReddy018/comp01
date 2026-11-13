@@ -10,7 +10,7 @@ var nl; var ad; var pnm; var mainfi; var mid; var bootj;
 var cMA; var cMB; var cMR; var cMS; var cCS; var cCD; var cCN; var cPS; var cPD;
 var cTV; var cSP; var cNP; var cNV;
 var leafs; var leafe; var leafk; var leafv; var leafc; var fuse; var fsp; var fused;
-var nrcm; var entm; var nrcc; var entc; var spent; var S0; var F0; var A0;
+var lastcall; var lastild; var nrcm; var entm; var nrcc; var entc; var spent; var S0; var F0; var A0;
 array pool[30000];
 array code[380000];
 array di[110000];
@@ -18,7 +18,7 @@ array rcell[1100]; array rkind[1100]; array rval[1100];
 array nms[4100]; array nml[4100]; array hn[4100]; array hb[1024]; array kt[4100];
 array gk[4100]; array gc[4100]; array lc[4100]; array lst[2048];
 array fe[256]; array fnp[256]; array fnrc[256]; array ffb[256]; array fpa[256];
-array lv[4100]; array fjs[256]; array p2[10]; array tp[32]; array fpar[2048]; array tcell[4096]; array at[4096]; array pw[10];
+array ao[4100]; array az[4100]; array lv[4100]; array fjs[256]; array p2[10]; array tp[32]; array fpar[2048]; array tcell[4096]; array at[4096]; array pw[10];
 
 func em(w) { code[nc] = w; nc = nc + 1; return 0; }
 func ins(a, b, c) { em(a); em(b); em(c); return 0; }
@@ -58,6 +58,7 @@ func epi(nrc) {
 func pat(f, np) { ins(f, f, nc + 16); ins(f, np, nc + 16); return 0; }
 func ild(np, d) {
   var f;
+  lastild = nc;
   f = nc + 23;
   pat(f, np);
   clr(10);
@@ -354,14 +355,43 @@ func vc(id) {
   if (lc[id] != 0) { return lc[id]; }
   return gc[id];
 }
+// try x = expr computed straight into x: rewrite statement temp t -> x in code[n1..nc).
+// unsafe if x is read after the first write (any x operand in range, apart from a
+// leading copy of x into t, which becomes a jump), or global x with a call after it.
+func asg(t, x, glob, n1) {
+  var i; var s; var fw; var w;
+  s = n1; fw = 0 - 1;
+  if (nc - n1 >= 12) {
+    if (code[n1] == 10) { if (code[n1 + 3] == 10) { if (code[n1 + 4] == x) {
+      if (code[n1 + 6] == t) { if (code[n1 + 7] == t) { if (code[n1 + 9] == t) {
+        if (code[n1 + 10] == 10) { s = n1 + 12; }
+      } } }
+    } } }
+  }
+  i = s;
+  while (i < nc) {
+    w = code[i];
+    if (w == x) { return 0; }
+    if (w == t) { if (fw < 0) { fw = i; } }
+    i = i + 1;
+  }
+  if (glob >= 1) { if (lastcall > fw) { return 0; } }
+  if (glob == 2) { if (lastild > fw) { return 0; } }
+  i = n1;
+  while (i < nc) { if (code[i] == t) { code[i] = x; } i = i + 1; }
+  if (s != n1) { code[n1] = 5; code[n1 + 1] = 6; code[n1 + 2] = n1 + 25; }
+  return 1;
+}
 // expression: lvl 0 cmp, 1 add, 2 mul, 3 unary/primary. Result into cell dest.
 func pe(lvl, dest) {
   var id; var fi; var base; var k; var t; var op; var rec; var n;
-  var cn; var pa; var c; var f; var n0; var lk; var lc2; var rl; var mk;
+  var cn; var pa; var c; var f; var n0; var lk; var lc2; var rl; var mk; var ll; var lvv; var fd;
   f = fuse; fuse = 0;
   if (lvl < 3) {
     n0 = nc;
     pe(lvl + 1, dest);
+    ll = 0;
+    if (leafs == n0) { if (leafe == nc) { if (leafk == 1) { ll = 1; lvv = leafv; } } }
     lk = 0;
     if (f == 1) {
       if (leafs == n0) {
@@ -373,35 +403,57 @@ func pe(lvl, dest) {
     while (lv(tok) == lvl) {
       op = tok; nt(); t = tmp(); n = nc; k = ntemp;
       pe(lvl + 1, t);
-      rl = 0; mk = 0;
+      rl = 0; mk = 0; fd = 0;
       if (leafs == n) {
         if (leafe == nc) {
           nc = n; ntemp = k - 1; leafe = 0 - 1; rl = 1;
           if (leafk == 1) {
             ns = ns - 1;
-            if (op == 42) { if (leafv < 256) { mk = 1; } }
-            if (mk == 0) { t = newS(leafv); }
+            if (ll == 1) { if (lvl > 0) {
+              fd = 1;
+              if (op == 43) { lvv = lvv + leafv; }
+              if (op == 45) { lvv = lvv - leafv; }
+              if (op == 42) { lvv = lvv * leafv; }
+              nc = n0; ns = ns - 1;
+              leafs = nc; c = newS(0 - lvv); clr(dest); sub(dest, c);
+              leafe = nc; leafk = 1; leafv = lvv;
+            } }
+            if (fd == 0) {
+              if (op == 42) { if (leafv >= 0) { if (leafv < 256) { mk = 1; } } }
+              if (mk == 0) { t = newS(leafv); }
+            }
           } else { t = leafc; }
         }
       }
-      if (f == 1) {
-        if (lv(tok) != 0) {
-          c = dest;
-          if (lk == 1) { if (rl == 1) { nc = n0; leafe = 0 - 1; c = lc2; } }
-          cmpbr(op, c, t);
-          fused = 1;
-          return 0;
+      if (fd == 0) {
+        if (f == 1) {
+          if (lv(tok) != 0) {
+            c = dest;
+            if (lk == 1) { if (rl == 1) { nc = n0; leafe = 0 - 1; c = lc2; } }
+            cmpbr(op, c, t);
+            fused = 1;
+            return 0;
+          }
         }
+        lk = 0; ll = 0;
+        if (mk == 1) { mulk(dest, leafv, t); } else { eop(op, dest, t); }
       }
-      lk = 0;
-      if (mk == 1) { mulk(dest, leafv, t); } else { eop(op, dest, t); }
     }
     return 0;
   }
   id = 0;
   if (pnm != 0) { id = pnm; pnm = 0; }
   if (id == 0) {
-    if (tok == 45) { nt(); pe(3, dest); neg(dest); return 0; }
+    if (tok == 45) {
+      nt(); n = nc; pe(3, dest);
+      if (leafs == n) { if (leafe == nc) { if (leafk == 1) {
+        nc = n; ns = ns - 1; leafv = 0 - leafv;
+        leafs = nc; c = newS(0 - leafv); clr(dest); sub(dest, c);
+        leafe = nc;
+        return 0;
+      } } }
+      neg(dest); return 0;
+    }
     if (tok == 1) {
       leafs = nc; c = newS(0 - tv); clr(dest); sub(dest, c);
       leafe = nc; leafk = 1; leafv = tv; nt(); return 0;
@@ -412,7 +464,12 @@ func pe(lvl, dest) {
     id = tv; nt();
   }
   if (tok == 91) {
-    nt(); t = tmp(); pe(0, t); nt();
+    nt(); t = tmp(); n = nc; k = ntemp; pe(0, t); nt();
+    if (leafs == n) { if (leafe == nc) { if (leafk == 1) { if (leafv >= 0) { if (leafv < az[id]) {
+      nc = n; ns = ns - 1; ntemp = k - 1; leafe = 0 - 1;
+      cpy(12582914 + ao[id] + leafv, dest);
+      return 0;
+    } } } } }
     clr(cNP); sub(cNP, gc[id]); sub(cNP, t);
     ild(cNP, dest);
     return 0;
@@ -437,6 +494,7 @@ func pe(lvl, dest) {
     if (rec == 1) {
       frest(ffb[fi]);
     }
+    lastcall = nc;
     cpy(8, dest);
     ad = ad - 1;
     return 0;
@@ -447,7 +505,7 @@ func pe(lvl, dest) {
 }
 // block: '{' stmts '}'
 func pb() {
-  var k; var k2; var t; var j; var j2; var l; var id; var mark; var c; var it; var vt; var fb; var fz;
+  var k; var k2; var t; var j; var j2; var l; var id; var mark; var c; var it; var vt; var fb; var fz; var n1; var glob; var ak; var af; var ac;
   nt();
   while (tok != 125) {
     mark = ntemp;
@@ -493,14 +551,26 @@ func pb() {
     if (k == 2) {
       id = tv; nt(); k2 = tok;
       if (k2 == 61) {
-        nt(); t = tmp(); pe(0, t); nt();
-        cpy(t, vc(id));
+        nt(); t = tmp(); n1 = nc; lastcall = 0 - 1; pe(0, t); nt();
+        glob = 0;
+        if (lc[id] == 0) { glob = 1; }
+        if (asg(t, vc(id), glob, n1) == 0) { cpy(t, vc(id)); }
       }
       if (k2 == 91) {
-        nt(); it = tmp(); pe(0, it); nt(); nt();
-        vt = tmp(); pe(0, vt); nt();
-        clr(cNP); sub(cNP, gc[id]); sub(cNP, it);
-        ist(cNP, vt);
+        nt(); it = tmp(); n1 = nc; ak = ntemp; pe(0, it); nt(); nt();
+        af = 0;
+        if (leafs == n1) { if (leafe == nc) { if (leafk == 1) { if (leafv >= 0) { if (leafv < az[id]) {
+          nc = n1; ns = ns - 1; ntemp = ak - 1; leafe = 0 - 1;
+          af = 1; ac = 12582914 + ao[id] + leafv;
+        } } } } }
+        if (af == 1) {
+          vt = tmp(); n1 = nc; lastcall = 0 - 1; lastild = 0 - 1; pe(0, vt); nt();
+          if (asg(vt, ac, 2, n1) == 0) { cpy(vt, ac); }
+        } else {
+          vt = tmp(); pe(0, vt); nt();
+          clr(cNP); sub(cNP, gc[id]); sub(cNP, it);
+          ist(cNP, vt);
+        }
       }
       if (k2 == 40) {
         pnm = id; t = tmp(); pe(3, t); nt();
@@ -541,7 +611,13 @@ func pf() {
 }
 func pn(x) {
   var i; var d; var p; var f;
-  if (x < 0) { putc(45); x = 0 - x; }
+  if (x < 0) {
+    putc(45); x = 0 - x;
+    if (x < 0) {
+      putc(50); putc(49); putc(52); putc(55); putc(52); putc(56); putc(51); putc(54); putc(52); putc(56);
+      return 0;
+    }
+  }
   f = 0; i = 9;
   while (i >= 0) {
     p = pw[i]; d = 0;
@@ -561,6 +637,7 @@ func dec(w) {
   x = x - 2;
   if (k == 1) { x = x + S0; }
   if (k == 2) { x = x + F0; }
+  if (k == 3) { x = x + A0; }
   return x;
 }
 func main() {
@@ -593,7 +670,7 @@ func main() {
     }
     if (c == 4) {
       nt(); id = tv; nt(); nt(); sz = tv; nt(); nt(); nt();
-      gk[id] = 2; gc[id] = newS(0); reg(3, arrtot); arrtot = arrtot + sz;
+      gk[id] = 2; gc[id] = newS(0); reg(3, arrtot); ao[id] = arrtot; az[id] = sz; arrtot = arrtot + sz;
     }
     if (c == 5) { pf(); }
   }

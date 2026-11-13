@@ -5,12 +5,23 @@ tier2/core.py — v1 to SUBLEQ compiler (Tier 2).
 Reads v1 source from stdin, prints SUBLEQ machine program integers to stdout.
 
 Architecture:
-  - Single pass: build symbol tables then emit SUBLEQ via asm.py backend.
-  - Return mechanism: each function has one return-jump instruction whose
-    c-field is patched per call site at runtime (self-modifying SUBLEQ).
-  - Array access: self-modifying SUBLEQ + post-link fixup for static addrs.
-  - Recursion: not yet supported (raises CompileError).
-  - Multiply: O(|b|) repeated-addition loop (documented limitation).
+  - Syntax tree, then code generation through the asm.py backend (SUBLEQ macros:
+    copy, add, jump, compare). Output is deterministic.
+  - Frames: every function's params, locals and temps are static cells.
+  - Return: each function has one return-jump instruction. Its c field is written by
+    the epilogue from a per-function data cell NRC_<fn> (a data-driven return), never
+    patched at the call site: call-site patching broke recursion. Recursive frames
+    save and restore NRC like any other cell.
+  - Recursion: a self-call pushes the live frame cells on a stack and pops them after
+    the call. The stack pointer is stored negated so the push/pop patch sequence is short.
+  - Arrays and the stack: SUBLEQ has no indirect addressing, so reads and writes patch
+    the address fields of their own instructions (self-modifying code), with a
+    post-link fixup for static addresses.
+  - Multiply: 31-step binary multiply in a shared routine, entered at the highest bit
+    that can matter; x * literal (0..255) is expanded inline.
+  - Optimizations: constant folding, assignment without a temp, literal array index as
+    a plain cell, compare against literal 0, call arguments written straight into the
+    callee's parameters, leaf operands read in place.
 """
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -18,8 +29,6 @@ from tools.asm import Assembler, FIXED
 from tools.spec_limits import (
     N, MAX_SOURCE_BYTES, MAX_PARAMS, MAX_NAME_LEN, MAX_RECURSION_DEPTH
 )
-
-MAX_FRAME_SIZE = 128   # max cells per recursive frame (params+locals+temps)
 
 # ════════════════════════════════════════════════════════════════════════════
 # LEXER
